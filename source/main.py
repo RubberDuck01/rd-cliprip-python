@@ -8,14 +8,12 @@ from rd_cliprip.controllers.main_controller import MainController
 from rd_cliprip.services import supported_sites
 from rd_cliprip.services.network import NetworkMonitor
 from rd_cliprip.ui.main_window import MainWindow
-from rd_cliprip.ui.theme import GLOBAL_STYLESHEET
 from rd_cliprip.resources import get_resources_dir
 
 
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Rubber Duck's ClipRip")
-    app.setStyleSheet(GLOBAL_STYLESHEET)
 
     icon_path = get_resources_dir() / "rd_cliprip_logo.png"
     if icon_path.exists():
