@@ -23,7 +23,8 @@ from rd_cliprip.models.session import (
 _COL_INDEX = 0
 _COL_ITEM = 1
 _COL_PROGRESS = 2
-_COL_STATUS = 3
+_COL_DETAILS = 3
+_COL_STATUS = 4
 
 _COLORS = {
     STATE_COMPLETED: QColor("#2e7d32"),
@@ -46,21 +47,27 @@ class DownloadsTable(QTableWidget):
         self._state_for_id: dict[str, str] = {}
         self._dest_for_id: dict[str, list[str]] = {}
         self._progress_for_id: dict[str, QProgressBar] = {}
+        self._details_for_id: dict[str, tuple[str, str, str]] = {}
 
-        self.setColumnCount(4)
-        self.setHorizontalHeaderLabels(["#", "Item", "Progress", "Status"])
+        self.setColumnCount(5)
+        self.setHorizontalHeaderLabels(
+            ["#", "Item", "Progress", "Speed / ETA / Size", "Status"]
+        )
         self.verticalHeader().setVisible(False)
         self.verticalHeader().setDefaultSectionSize(32)
 
         header = self.horizontalHeader()
-        # '#' fixed and tiny; 'Item' takes the free space; 'Status' is user-resizable.
+        # '#' fixed and tiny; 'Item' takes the free space; the other two are
+        # user-resizable so people can widen Speed/ETA or Status as needed.
         header.setSectionResizeMode(_COL_INDEX, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(_COL_ITEM, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(_COL_PROGRESS, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(_COL_DETAILS, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(_COL_STATUS, QHeaderView.ResizeMode.Interactive)
         self.setColumnWidth(_COL_INDEX, 40)
         self.setColumnWidth(_COL_PROGRESS, 180)
-        self.setColumnWidth(_COL_STATUS, 220)
+        self.setColumnWidth(_COL_DETAILS, 240)
+        self.setColumnWidth(_COL_STATUS, 180)
 
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -79,6 +86,7 @@ class DownloadsTable(QTableWidget):
         self._state_for_id.clear()
         self._dest_for_id.clear()
         self._progress_for_id.clear()
+        self._details_for_id.clear()
         for index, item in enumerate(items):
             self._append_row(index, item)
 
@@ -88,6 +96,7 @@ class DownloadsTable(QTableWidget):
         self._row_for_id[item.id] = row
         self._state_for_id[item.id] = item.state
         self._dest_for_id[item.id] = item.dest_paths
+        self._details_for_id[item.id] = ("", "", "")
 
         num_item = QTableWidgetItem(str(display_index + 1))
         num_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -108,6 +117,10 @@ class DownloadsTable(QTableWidget):
         host_layout.addWidget(progress)
         self.setCellWidget(row, _COL_PROGRESS, progress_host)
         self._progress_for_id[item.id] = progress
+
+        details_item = QTableWidgetItem("")
+        details_item.setToolTip("")
+        self.setItem(row, _COL_DETAILS, details_item)
 
         status_item = QTableWidgetItem(self._status_text(item))
         status_item.setToolTip(item.error or "")
@@ -131,6 +144,17 @@ class DownloadsTable(QTableWidget):
             status_item.setText(self._status_text(item))
             status_item.setToolTip(item.error or "")
 
+        # Completed rows show the final file size; others keep live data.
+        details_item = self.item(row, _COL_DETAILS)
+        if details_item is not None:
+            if item.state == STATE_COMPLETED:
+                details_item.setText(self._completed_size(item.size_mb))
+                details_item.setToolTip(self._completed_size(item.size_mb))
+            elif item.state not in (STATE_ACTIVE,):
+                speed, eta, total = self._details_for_id.get(item.id, ("", "", ""))
+                if not (speed or eta or total):
+                    details_item.setText("")
+
         item_cell = self.item(row, _COL_ITEM)
         if item_cell is not None and item.title:
             item_cell.setText(item.title)
@@ -138,11 +162,32 @@ class DownloadsTable(QTableWidget):
 
         self._color_row(row, item.state)
 
+    def update_progress(self, item_id: str, percent: int, speed: str, eta: str, total: str) -> None:
+        """Refresh the live Speed/ETA/Size + progress for an active row."""
+        row = self._row_for_id.get(item_id)
+        if row is None:
+            return
+        widget = self._progress_for_id.get(item_id)
+        if isinstance(widget, QProgressBar):
+            widget.setValue(max(0, min(100, percent)))
+
+        self._details_for_id[item_id] = (speed, eta, total)
+        details_item = self.item(row, _COL_DETAILS)
+        if details_item is not None:
+            text = self._live_details(speed, eta, total)
+            details_item.setText(text)
+            details_item.setToolTip(text)
+
+        status_item = self.item(row, _COL_STATUS)
+        if status_item is not None and self.item_state(item_id) == STATE_ACTIVE:
+            status_item.setText(f"Downloading\u2026 {percent}%")
+
     def remove_item(self, item_id: str) -> None:
         row = self._row_for_id.pop(item_id, None)
         self._state_for_id.pop(item_id, None)
         self._dest_for_id.pop(item_id, None)
         self._progress_for_id.pop(item_id, None)
+        self._details_for_id.pop(item_id, None)
         if row is not None:
             self.removeRow(row)
             self._reindex()
@@ -176,6 +221,29 @@ class DownloadsTable(QTableWidget):
         if item.state == STATE_CANCELLED:
             return "Cancelled"
         return "Queued"
+
+    @staticmethod
+    def _live_details(speed: str, eta: str, total: str) -> str:
+        parts: list[str] = []
+        if speed:
+            parts.append(speed)
+        if eta:
+            parts.append("ETA " + eta)
+        if total:
+            parts.append("of " + total)
+        return "  \u00b7  ".join(parts)
+
+    @staticmethod
+    def _completed_size(size_mb: float) -> str:
+        try:
+            mb = max(0.0, float(size_mb))
+        except (TypeError, ValueError):
+            return ""
+        if mb <= 0:
+            return ""
+        if mb >= 1024:
+            return f"{mb / 1024:.2f} GiB"
+        return f"{mb:.2f} MiB"
 
     # ------------------------------------------------------------------
     #  Context menu

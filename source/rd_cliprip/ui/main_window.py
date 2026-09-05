@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self.manager.items_changed.connect(self._on_items_changed)
         self.manager.status_message.connect(self.set_status)
         self.manager.all_finished.connect(self._on_all_finished)
+        self.manager.progress_updated.connect(self.table.update_progress)
         if self.manager.session is None:
             self.manager.new_session(self.config.downloads_dir)
 

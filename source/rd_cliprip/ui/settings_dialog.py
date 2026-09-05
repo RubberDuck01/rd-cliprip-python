@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -93,6 +94,15 @@ class SettingsDialog(QDialog):
         retry_font.setPointSize(retry_font.pointSize() - 1)
         retry_desc.setFont(retry_font)
         proc_form.addRow(retry_desc)
+
+        self.speed_spin = QDoubleSpinBox()
+        self.speed_spin.setRange(0.0, 100.0)
+        self.speed_spin.setDecimals(1)
+        self.speed_spin.setSingleStep(0.5)
+        self.speed_spin.setSuffix(" MB/s")
+        self.speed_spin.setSpecialValueText("Unlimited")
+        self.speed_spin.setValue(self.config.max_download_speed_mbps)
+        proc_form.addRow("Max download speed (per agent):", self.speed_spin)
 
         self.format_combo = QComboBox()
         self.format_combo.addItems(["MP4", "MKV", "WebM"])
@@ -194,6 +204,7 @@ class SettingsDialog(QDialog):
         self.config.set_max_concurrent_downloads(self.concurrent_spin.value())
         self.config.set_remux_to_mp4(self.remux_check.isChecked())
         self.config.set_auto_retry(self.retry_spin.value())
+        self.config.set_max_download_speed_mbps(self.speed_spin.value())
         self.config.set_preferred_format(self.format_combo.currentText().lower())
         res_text = self.resolution_combo.currentText().split()[0].lower().replace("p", "")
         self.config.set_preferred_resolution(f"{res_text}p")

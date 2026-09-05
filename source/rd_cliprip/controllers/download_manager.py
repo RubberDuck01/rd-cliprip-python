@@ -44,6 +44,7 @@ class DownloadManager(QObject):
     items_changed = pyqtSignal()  # queue composition changed
     status_message = pyqtSignal(str)
     all_finished = pyqtSignal()
+    progress_updated = pyqtSignal(str, int, str, str, str)  # id, %, speed, eta, total
 
     def __init__(self, config: Config, stats: Stats) -> None:
         super().__init__()
@@ -476,8 +477,17 @@ class DownloadManager(QObject):
                 {"kind": "title", "item_id": item_id, "title": title or ""}
             )
 
-    def _on_progress(self, item_id: str, percent: int) -> None:
-        self._results.put({"kind": "progress", "item_id": item_id, "percent": percent})
+    def _on_progress(self, item_id: str, info: dict) -> None:
+        self._results.put(
+            {
+                "kind": "progress",
+                "item_id": item_id,
+                "percent": int(info.get("percent") or 0),
+                "speed": str(info.get("speed", "") or ""),
+                "eta": str(info.get("eta", "") or ""),
+                "total": str(info.get("total", "") or ""),
+            }
+        )
 
     def _worker_loop(self) -> None:
         while not self._stop.is_set():
@@ -512,6 +522,7 @@ class DownloadManager(QObject):
                     remux_to_mp4=self.config.remux_to_mp4 and ffmpeg is not None,
                     ffmpeg_location=str(Path(ffmpeg).parent) if ffmpeg else None,
                     ffmpeg_exe=ffmpeg,
+                    rate_limit_mbps=self.config.max_download_speed_mbps,
                     on_progress=self._on_progress,
                     register_proc=self._register_proc,
                     unregister_proc=self._unregister_proc,
@@ -572,8 +583,15 @@ class DownloadManager(QObject):
             return
 
         if kind == "progress":
-            item.progress = int(msg.get("percent", item.progress))
-            self.item_updated.emit(item.id)
+            percent = int(msg.get("percent", item.progress))
+            item.progress = percent
+            self.progress_updated.emit(
+                item.id,
+                percent,
+                str(msg.get("speed", "")),
+                str(msg.get("eta", "")),
+                str(msg.get("total", "")),
+            )
             return
 
         if kind == "result":

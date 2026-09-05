@@ -50,6 +50,7 @@ class Config:
                 "max_concurrent_downloads": 1,
                 "remux_to_mp4": True,
                 "auto_retry": 1,
+                "max_download_speed_mbps": 0.0,
                 "network_indicator_enabled": True,
                 "network_poll_interval": 15,
             },
@@ -110,6 +111,13 @@ class Config:
             return 1
 
     @property
+    def max_download_speed_mbps(self) -> float:
+        try:
+            return max(0.0, float(self.data["settings"].get("max_download_speed_mbps", 0.0)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    @property
     def network_indicator_enabled(self) -> bool:
         return bool(self.data["settings"].get("network_indicator_enabled", True))
 
@@ -167,6 +175,10 @@ class Config:
 
     def set_auto_retry(self, value: int) -> None:
         self.data["settings"]["auto_retry"] = max(0, min(5, int(value)))
+        self.save()
+
+    def set_max_download_speed_mbps(self, value: float) -> None:
+        self.data["settings"]["max_download_speed_mbps"] = max(0.0, float(value))
         self.save()
 
     def set_network_indicator_enabled(self, value: bool) -> None:

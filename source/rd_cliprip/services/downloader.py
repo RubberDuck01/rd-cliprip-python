@@ -31,6 +31,33 @@ _ID_SUFFIX_RE = re.compile(r"\s*\[[^\]]+\]\s*$")
 # ffmpeg "-i" reports container duration on stderr as:  Duration: 01:23:45.67
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+)")
 
+_SIZE_RE = re.compile(r"of\s+~?([\d.,]+\s?[KMGT]?i?B)")
+_SPEED_RE = re.compile(r"at\s+(?:Unknown\s?)?([\d.,]+\s?[KMGT]?i?B/s)")
+_ETA_RE = re.compile(r"ETA\s+([0-9:]+)")
+
+
+def parse_progress_line(line: str) -> dict[str, Any]:
+    """Extract percent / total size / speed / ETA from a yt-dlp progress line.
+
+    Returns dict with keys: percent (int or None), total, speed, eta (str).
+    """
+    info: dict[str, Any] = {"percent": None, "total": "", "speed": "", "eta": ""}
+    match = _PROGRESS_RE.search(line)
+    if not match:
+        return info
+    info["percent"] = int(float(match.group(1)))
+
+    size = _SIZE_RE.search(line)
+    if size:
+        info["total"] = size.group(1).replace(" ", "")
+    speed = _SPEED_RE.search(line)
+    if speed:
+        info["speed"] = speed.group(1).replace(" ", "")
+    eta = _ETA_RE.search(line)
+    if eta:
+        info["eta"] = eta.group(1)
+    return info
+
 # Error text that means the URL itself is dead/permanently broken. These must
 # never be auto-retried (retrying just hammers a link that will never work).
 _FATAL_HINTS = (
@@ -354,11 +381,13 @@ def build_ytdlp_args(
     ffmpeg_location: str | None = None,
     remux_to_mp4: bool = False,
     no_playlist: bool = True,
+    rate_limit_mbps: float = 0.0,
 ) -> list[str]:
     """Build the yt-dlp argument list for video downloads.
 
     ``output_template`` may be an absolute path template (e.g. a staging dir)
     or None to fall back to ``<output_dir>/%(title).200s.%(ext)s``.
+    ``rate_limit_mbps`` caps each download's speed (0 = unlimited).
     """
     ytdlp = find_ytdlp_exe()
     if not ytdlp:
@@ -410,6 +439,11 @@ def build_ytdlp_args(
     if ffmpeg_location:
         args.insert(2, "--ffmpeg-location")
         args.insert(3, ffmpeg_location)
+
+    # Per-agent speed cap (yt-dlp accepts K/M/G suffixes)
+    if rate_limit_mbps and rate_limit_mbps > 0:
+        args.insert(2, "--limit-rate")
+        args.insert(3, f"{rate_limit_mbps:.2f}M")
 
     # Remux final container to MP4 (needs ffmpeg)
     if remux_to_mp4:
@@ -516,6 +550,7 @@ def run_single_item(
     remux_to_mp4: bool = False,
     ffmpeg_location: str | None = None,
     ffmpeg_exe: str | None = None,
+    rate_limit_mbps: float = 0.0,
     on_progress: Any = None,
     register_proc: Any = None,
     unregister_proc: Any = None,
@@ -554,6 +589,7 @@ def run_single_item(
             ffmpeg_location=ffmpeg_location,
             remux_to_mp4=remux_to_mp4,
             no_playlist=not allow_playlist,
+            rate_limit_mbps=rate_limit_mbps,
         )
     except Exception as ex:
         return {
@@ -598,10 +634,10 @@ def run_single_item(
             line = _decode_output(raw_line).strip()
             if line:
                 last_line = line
-            match = _PROGRESS_RE.search(line)
-            if match and on_progress:
+            info = parse_progress_line(line)
+            if info["percent"] is not None and on_progress:
                 try:
-                    on_progress(item_id, int(float(match.group(1))))
+                    on_progress(item_id, info)
                 except Exception:
                     pass
     finally:
