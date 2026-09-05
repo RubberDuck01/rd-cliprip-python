@@ -1,5 +1,7 @@
 GLOBAL_STYLESHEET = """
-/* Menu bar items (File, Edit, View, ...) light up on hover */
+/* Menu bar items (File, Edit, View, ...) light up on hover.
+   NOTE: no QPushButton rules here - styling buttons forces them into the
+   stylesheet renderer and hides their native background/border. */
 QMenuBar::item {
     padding: 4px 8px;
     border-radius: 4px;
@@ -18,17 +20,5 @@ QMenu::item {
 }
 QMenu::item:selected {
     background: rgba(128, 128, 128, 55);
-}
-
-/* Buttons */
-QPushButton {
-    border-radius: 4px;
-    padding: 4px 12px;
-}
-QPushButton:hover {
-    background: rgba(128, 128, 128, 45);
-}
-QPushButton:pressed {
-    background: rgba(128, 128, 128, 90);
 }
 """
