@@ -192,7 +192,7 @@ class DownloadsTable(QTableWidget):
 
         status_item = self.item(row, _COL_STATUS)
         if status_item is not None and self.item_state(item_id) == STATE_ACTIVE:
-            status_item.setText(f"Downloading\u2026 {percent}%")
+            status_item.setText("Downloading\u2026")
 
     def remove_item(self, item_id: str) -> None:
         row = self._row_for_id.pop(item_id, None)
@@ -240,7 +240,7 @@ class DownloadsTable(QTableWidget):
             count = len(item.dest_paths)
             return f"Saved ({count} file{'s' if count != 1 else ''})"
         if item.state == STATE_ACTIVE:
-            return f"Downloading\u2026 {item.progress}%"
+            return "Downloading\u2026"
         if item.state == STATE_FAILED:
             short = (item.error or "Failed").replace("\n", " ")
             return f"Failed \u2014 {short[:60]}"
