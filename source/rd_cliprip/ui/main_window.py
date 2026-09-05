@@ -50,7 +50,7 @@ class MainWindow(QMainWindow):
         self.manager = manager
         self.network_monitor = network_monitor
         self.setWindowTitle("Rubber Duck's ClipRip")
-        self.resize(820, 560)
+        self.resize(1000, 580)
 
         self._build_menu()
         self._build_ui()
