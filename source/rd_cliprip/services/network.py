@@ -71,12 +71,9 @@ class NetworkStatus:
             lines.append("Note: This connection looks like a VPN/proxy.")
         return "\n".join(lines)
 
-    @staticmethod
-    def _flag(country_code: str) -> str:
-        code = country_code.strip().upper()
-        if len(code) != 2 or not code.isalpha():
-            return country_code
-        return "".join(chr(ord(c) + 127397) for c in code)
+    def _flag(self, country_code: str) -> str:
+        flag = country_flag(country_code)
+        return flag if flag else country_code
 
 
 def _http_json(url: str, timeout: int) -> dict | None:
@@ -87,6 +84,18 @@ def _http_json(url: str, timeout: int) -> dict | None:
         return json.loads(data)
     except Exception:
         return None
+
+
+def country_flag(country_code: str) -> str:
+    """Return the regional-indicator emoji flag for a 2-letter country code.
+
+    Rendering depends on the font used by the caller; on Windows most regular
+    fonts lack flag glyphs and will show the raw letters instead.
+    """
+    code = (country_code or "").strip().upper()
+    if len(code) != 2 or not code.isalpha():
+        return ""
+    return "".join(chr(ord(c) + 127397) for c in code)
 
 
 def _looks_like_vpn(isp: str, org: str) -> bool:

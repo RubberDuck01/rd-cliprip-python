@@ -1,5 +1,6 @@
 import os
 import webbrowser
+from html import escape
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QEvent, QTimer, QUrl, pyqtSignal
@@ -23,7 +24,7 @@ from rd_cliprip.controllers.download_manager import DownloadManager
 from rd_cliprip.models.config import Config
 from rd_cliprip.models.stats import Stats
 from rd_cliprip.resources import get_resources_dir
-from rd_cliprip.services.network import NetworkMonitor
+from rd_cliprip.services.network import NetworkMonitor, country_flag
 from rd_cliprip.ui.about_dialog import AboutDialog
 from rd_cliprip.ui.donation_dialog import DonationDialog
 from rd_cliprip.ui.downloads_table import DownloadsTable
@@ -278,6 +279,7 @@ class MainWindow(QMainWindow):
         footer_row.addStretch()
         self.network_label = QLabel("Network: checking\u2026")
         self.network_label.setToolTip("Checking connectivity\u2026")
+        self.network_label.setTextFormat(Qt.TextFormat.RichText)
         footer_row.addWidget(self.network_label)
         version_label = QLabel(f"Version {__version__}")
         version_label.setEnabled(False)
@@ -299,10 +301,32 @@ class MainWindow(QMainWindow):
         self.network_monitor.start(self.config.network_poll_interval)
 
     def _on_network_status(self, status) -> None:
-        self.network_label.setText(status.display_text())
+        self.network_label.setText(self._network_pill_html(status))
         self.network_label.setToolTip(status.tooltip())
         color = "#2e7d32" if status.connected else "#c62828"
         self.network_label.setStyleSheet(f"color: {color};")
+
+    @staticmethod
+    def _network_pill_html(status) -> str:
+        """Rich-text pill. The flag glyph is wrapped in Segoe UI Emoji so Windows
+        renders it as an emoji flag where supported; otherwise it degrades to
+        showing the two-letter code."""
+        if not status.connected:
+            return "&#9679; Offline"
+        parts = ["&#9679; Online"]
+        if status.ip:
+            parts.append(escape(status.ip))
+        flag = country_flag(status.country_code)
+        if flag:
+            parts.append(
+                f'<span style="font-family: \'Segoe UI Emoji\';">{flag}</span>'
+            )
+        elif status.country_code:
+            parts.append(escape(status.country_code))
+        text = "  &middot;  ".join(parts)
+        if status.vpn_hint:
+            text += "  <i>(VPN)</i>"
+        return text
 
     # ------------------------------------------------------------------
     #  Events
