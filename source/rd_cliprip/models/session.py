@@ -46,7 +46,7 @@ class SessionItem:
         return cls(**{k: v for k, v in data.items() if k in known})
 
 
-def _data_dir() -> Path:
+def _app_data_dir() -> Path:
     """Return the app data dir shared with Stats."""
     if os.name == "nt":
         base = Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
@@ -55,99 +55,191 @@ def _data_dir() -> Path:
     return base / "Rubber Duck Softworks" / "ClipRip" / "Data"
 
 
-class DownloadSession:
-    """Persistent, resumable queue of URLs to download.
+def sessions_dir() -> Path:
+    return _app_data_dir() / "sessions"
 
-    A session is the source of truth for a batch of downloads.  It stores
-    enough per-item state (status, retry attempts, final file paths) to
-    resume after the app is stopped and restarted.
+
+def _active_file() -> Path:
+    return _app_data_dir() / "active_session.txt"
+
+
+def session_path(session_id: str) -> Path:
+    return sessions_dir() / f"session_{session_id}.json"
+
+
+def list_sessions() -> list[dict[str, Any]]:
+    """Return metadata for every stored session, newest first."""
+    try:
+        files = sorted(
+            sessions_dir().glob("session_*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except Exception:
+        files = []
+
+    result: list[dict[str, Any]] = []
+    for path in files:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        items = payload.get("items", [])
+        states = [i.get("state", STATE_QUEUED) for i in items]
+        result.append(
+            {
+                "id": payload.get("id", path.stem.replace("session_", "")),
+                "label": payload.get("label", ""),
+                "output_dir": payload.get("output_dir", ""),
+                "source_file": payload.get("source_file", ""),
+                "created_at": payload.get("created_at", ""),
+                "total": len(items),
+                "completed": states.count(STATE_COMPLETED),
+                "remaining": sum(1 for s in states if s in RESUMABLE_STATES),
+            }
+        )
+    return result
+
+
+def delete_session_file(session_id: str) -> None:
+    try:
+        path = session_path(session_id)
+        if path.exists():
+            path.unlink()
+    except Exception:
+        pass
+
+
+def set_active_session(session_id: str) -> None:
+    try:
+        _active_file().parent.mkdir(parents=True, exist_ok=True)
+        _active_file().write_text(session_id, encoding="utf-8")
+    except Exception:
+        pass
+
+
+def clear_active_session() -> None:
+    try:
+        if _active_file().exists():
+            _active_file().unlink()
+    except Exception:
+        pass
+
+
+def get_active_session_id() -> str | None:
+    try:
+        if _active_file().exists():
+            value = _active_file().read_text(encoding="utf-8").strip()
+            return value if value else None
+    except Exception:
+        pass
+    return None
+
+
+class DownloadSession:
+    """A persistent, resumable queue of URLs to download.
+
+    Each session is stored as its own file under the data dir's ``sessions/``
+    folder, identified by a unique id.  One session can be active at a time;
+    the rest stay saved on disk and can be reopened or deleted.
     """
 
-    def __init__(self, output_dir: str, source_file: str = "") -> None:
-        self.data_dir = _data_dir()
-        self.session_file = self.data_dir / "session.json"
-        self.history_dir = self.data_dir / "session_history"
+    def __init__(
+        self,
+        output_dir: str = "",
+        source_file: str = "",
+        label: str = "",
+        session_id: str | None = None,
+    ) -> None:
+        self.id = session_id or uuid.uuid4().hex[:12]
+        self.label = label or self._default_label(source_file)
         self.output_dir = output_dir
         self.source_file = source_file
         self.created_at = datetime.now().isoformat()
         self.updated_at = self.created_at
         self.items: list[SessionItem] = []
 
+    @staticmethod
+    def _default_label(source_file: str) -> str:
+        if source_file:
+            name = Path(source_file).stem.strip()
+            if name:
+                return name
+        return f"Session {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
     # ------------------------------------------------------------------
     #  Persistence
     # ------------------------------------------------------------------
+
+    @property
+    def file_path(self) -> Path:
+        return session_path(self.id)
 
     def save(self) -> None:
         self.updated_at = datetime.now().isoformat()
         payload = {
             "version": 1,
+            "id": self.id,
+            "label": self.label,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "output_dir": self.output_dir,
             "source_file": self.source_file,
             "items": [i.to_dict() for i in self.items],
         }
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.session_file.write_text(
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        self.file_path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
         )
 
     @classmethod
-    def load(cls) -> "DownloadSession | None":
-        session_file = _data_dir() / "session.json"
-        if not session_file.exists():
+    def load(cls, session_id: str) -> "DownloadSession | None":
+        path = session_path(session_id)
+        if not path.exists():
             return None
         try:
-            payload = json.loads(session_file.read_text(encoding="utf-8"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return None
 
         session = cls(
             output_dir=str(payload.get("output_dir", "")),
             source_file=str(payload.get("source_file", "")),
+            label=str(payload.get("label", "")),
+            session_id=str(payload.get("id", session_id)),
         )
         session.created_at = str(payload.get("created_at", session.created_at))
         session.updated_at = str(payload.get("updated_at", session.updated_at))
         session.items = [SessionItem.from_dict(d) for d in payload.get("items", [])]
         return session
 
-    def archive(self) -> None:
-        """Move the active session file into history (e.g. before starting a new one).
-
-        History is capped: only the most recent ``_MAX_HISTORY`` archives are kept.
-        """
+    @classmethod
+    def load_legacy(cls) -> "DownloadSession | None":
+        """Import the pre-session-manager singleton file (Data/session.json)."""
+        legacy = _app_data_dir() / "session.json"
+        if not legacy.exists():
+            return None
         try:
-            self.history_dir.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            if self.session_file.exists():
-                self.session_file.rename(
-                    self.history_dir / f"session_{stamp}.json"
-                )
-            self._prune_history()
+            payload = json.loads(legacy.read_text(encoding="utf-8"))
         except Exception:
-            pass
+            return None
+        session = cls(
+            output_dir=str(payload.get("output_dir", "")),
+            source_file=str(payload.get("source_file", "")),
+        )
+        session.created_at = str(payload.get("created_at", session.created_at))
+        session.items = [SessionItem.from_dict(d) for d in payload.get("items", [])]
+        return session
 
-    def _prune_history(self, keep: int = 10) -> None:
-        try:
-            archives = sorted(self.history_dir.glob("session_*.json"))
-            for old in archives[:-keep]:
-                old.unlink()
-        except Exception:
-            pass
+    def delete_file(self) -> None:
+        delete_session_file(self.id)
 
-    def clear_file(self) -> None:
-        try:
-            if self.session_file.exists():
-                self.session_file.unlink()
-        except Exception:
-            pass
+    def touch(self) -> None:
+        self.updated_at = datetime.now().isoformat()
 
     # ------------------------------------------------------------------
     #  Items
     # ------------------------------------------------------------------
-
-    def touch(self) -> None:
-        self.updated_at = datetime.now().isoformat()
 
     def add_url(self, url: str) -> SessionItem:
         item = SessionItem(url=url.strip())
@@ -156,8 +248,7 @@ class DownloadSession:
         return item
 
     def add_urls(self, urls: list[str]) -> list[SessionItem]:
-        added = [self.add_url(u) for u in urls]
-        return added
+        return [self.add_url(u) for u in urls]
 
     def get_item(self, item_id: str) -> SessionItem | None:
         for item in self.items:
@@ -166,7 +257,6 @@ class DownloadSession:
         return None
 
     def next_queued(self) -> SessionItem | None:
-        """Return the first item that still needs work, or None."""
         for item in self.items:
             if item.state in RESUMABLE_STATES:
                 return item
@@ -217,7 +307,6 @@ class DownloadSession:
         item.touch()
 
     def reset_for_resume(self) -> None:
-        """Return transient states to queued so a resume picks them up again."""
         for item in self.items:
             if item.state == STATE_ACTIVE:
                 item.state = STATE_QUEUED

@@ -84,8 +84,11 @@ class MainWindow(QMainWindow):
         import_action = QAction("&Import URL List (.txt)...", self, triggered=self.import_url_list)
         import_action.setShortcut(QKeySequence("Ctrl+O"))
         file_menu.addAction(import_action)
-        self._resume_action = QAction("&Resume Last Session", self, triggered=self.resume_last_session)
-        file_menu.addAction(self._resume_action)
+        self._session_manager_action = QAction(
+            "&Session Manager...", self, triggered=self.open_session_manager
+        )
+        self._session_manager_action.setShortcut(QKeySequence("Ctrl+M"))
+        file_menu.addAction(self._session_manager_action)
         file_menu.addSeparator()
         open_action = QAction(
             "&Open Downloads Directory", self, triggered=self.open_downloads_directory
@@ -389,13 +392,12 @@ class MainWindow(QMainWindow):
             self._on_items_changed()
 
     def import_url_list(self) -> None:
-        if self.manager.running or (
-            self.manager.session is not None and self.manager.session.remaining() > 0
-        ):
+        if self.manager.running:
             answer = QMessageBox.question(
                 self,
                 "Start a new list?",
-                "Importing a new URL list replaces the current one.\n\nContinue?",
+                "Downloads are running. Starting a new list pauses the current "
+                "session (it can be resumed later).\n\nContinue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -409,7 +411,7 @@ class MainWindow(QMainWindow):
             return
         count, duplicates = self.manager.import_txt(path, self.output_input.text())
         if count:
-            message = f"Imported <b>{count}</b> URL(s) into the queue."
+            message = f"Imported <b>{count}</b> URL(s) into a new session."
             if duplicates:
                 message += (
                     f"<br><br><b>{duplicates}</b> duplicate(s) were found "
@@ -427,14 +429,10 @@ class MainWindow(QMainWindow):
                     "which were removed.",
                 )
 
-    def resume_last_session(self) -> None:
-        session = self.manager.load_last_session()
-        if session is None:
-            self.set_status("No previous session found.")
-            return
-        self._on_items_changed()
-        if session.remaining() > 0 and not self.manager.running:
-            self.manager.start()
+    def open_session_manager(self) -> None:
+        from rd_cliprip.ui.session_manager_dialog import SessionManagerDialog
+
+        SessionManagerDialog(self, self.manager, self.import_url_list).exec()
 
     def _prompt_resume_session(self) -> None:
         session = self.manager.session
@@ -459,17 +457,16 @@ class MainWindow(QMainWindow):
     def discard_session(self) -> None:
         answer = QMessageBox.question(
             self,
-            "Discard session?",
-            "This removes the current queue. Downloads in progress will be stopped.",
+            "Delete session?",
+            "This deletes the current session and all its progress.\n\n"
+            "Downloads in progress will be stopped.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
         self.manager.discard_session()
-        if self.manager.session is None:
-            self.manager.new_session(self.config.downloads_dir)
-        self.set_status("Session discarded.")
+        self.set_status("Session deleted. Started an empty session.")
 
     # ------------------------------------------------------------------
     #  Manager-driven UI updates
@@ -514,9 +511,6 @@ class MainWindow(QMainWindow):
         running = self.manager.running
         self.start_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
-        session = self.manager.session
-        remaining = session.remaining() if session is not None else 0
-        self._resume_action.setEnabled(not running and remaining > 0)
 
     def _open_item_folder(self, item_id: str) -> None:
         path = self.table.item_dest_paths(item_id)

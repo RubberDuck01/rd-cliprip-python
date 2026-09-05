@@ -15,6 +15,11 @@ from rd_cliprip.models.session import (
     STATE_QUEUED,
     DownloadSession,
     SessionItem,
+    clear_active_session,
+    delete_session_file,
+    get_active_session_id,
+    list_sessions,
+    set_active_session,
 )
 from rd_cliprip.services.downloader import (
     find_ffmpeg_exe,
@@ -72,21 +77,80 @@ class DownloadManager(QObject):
         self.session = session
         if session is not None:
             session.save()
+            set_active_session(session.id)
         self.items_changed.emit()
 
-    def new_session(self, output_dir: str, source_file: str = "") -> DownloadSession:
-        """Archive any unfinished session and start a fresh one."""
-        if self.session is not None and self.session.remaining() > 0:
-            self.session.archive()
-        session = DownloadSession(output_dir=output_dir, source_file=source_file)
-        self.set_session(session)
-        return session
-
-    def load_last_session(self) -> DownloadSession | None:
-        session = DownloadSession.load()
+    def _open_by_id(self, session_id: str) -> DownloadSession | None:
+        session = DownloadSession.load(session_id)
         if session is not None:
             self.set_session(session)
         return session
+
+    def new_session(
+        self,
+        output_dir: str,
+        source_file: str = "",
+        label: str = "",
+    ) -> DownloadSession:
+        """Create a brand-new session file and make it active."""
+        session = DownloadSession(
+            output_dir=output_dir, source_file=source_file, label=label
+        )
+        self.set_session(session)
+        return session
+
+    def ensure_session(self) -> DownloadSession:
+        """Return the active session, creating an empty one if there is none."""
+        if self.session is None:
+            self.new_session(self.config.downloads_dir, label="Untitled")
+        assert self.session is not None
+        return self.session
+
+    def startup_load(self) -> DownloadSession:
+        """Resolve which session to show when the app launches.
+
+        Priority: last active session, then most recent, then a migrated
+        legacy session, then a fresh empty session.
+        """
+        sessions = list_sessions()
+        active_id = get_active_session_id()
+        if active_id:
+            session = self._open_by_id(active_id)
+            if session is not None:
+                return session
+        if sessions:
+            session = self._open_by_id(sessions[0]["id"])
+            if session is not None:
+                return session
+        legacy = DownloadSession.load_legacy()
+        if legacy is not None:
+            self.set_session(legacy)
+            return legacy
+        return self.new_session(self.config.downloads_dir, label="Untitled")
+
+    def open_session(self, session_id: str) -> DownloadSession | None:
+        """Load a stored session and make it active."""
+        return self._open_by_id(session_id)
+
+    @staticmethod
+    def stored_sessions() -> list[dict]:
+        return list_sessions()
+
+    def delete_session(self, session_id: str) -> None:
+        """Delete a stored session. If it was active, switch to another or empty."""
+        was_current = self.session is not None and self.session.id == session_id
+        if was_current:
+            self.stop()
+        delete_session_file(session_id)
+        if get_active_session_id() == session_id:
+            clear_active_session()
+        if was_current:
+            remaining = list_sessions()
+            if remaining:
+                self._open_by_id(remaining[0]["id"])
+        if self.session is None:
+            self.new_session(self.config.downloads_dir, label="Untitled")
+        self.items_changed.emit()
 
     # ------------------------------------------------------------------
     #  Adding URLs
@@ -94,7 +158,7 @@ class DownloadManager(QObject):
 
     def add_urls(self, urls: list[str]) -> list[SessionItem]:
         if self.session is None:
-            self.session = DownloadSession(output_dir=self.config.downloads_dir)
+            self.new_session(self.config.downloads_dir, label="Untitled")
         clean: list[str] = []
         seen: set[str] = set()
         for u in urls:
@@ -117,9 +181,10 @@ class DownloadManager(QObject):
         return added
 
     def import_txt(self, path: str, output_dir: str | None = None) -> tuple[int, int]:
-        """Import a .txt file of URLs (one per line) as a new session.
+        """Import a .txt file of URLs (one per line) as a NEW session.
 
-        Duplicate URLs inside the file are removed automatically.
+        Existing sessions are left untouched on disk. Duplicate URLs inside the
+        file are removed automatically.
         Returns (number of URLs imported, number of duplicates dropped).
         """
         txt = Path(path)
@@ -142,10 +207,13 @@ class DownloadManager(QObject):
         if not unique:
             return 0, duplicates
         session = self.new_session(
-            output_dir=output_dir or self.config.downloads_dir, source_file=str(txt)
+            output_dir=output_dir or self.config.downloads_dir,
+            source_file=str(txt),
+            label=Path(txt).stem,
         )
         session.add_urls(unique)
         session.save()
+        set_active_session(session.id)
         self.items_changed.emit()
         return len(unique), duplicates
 
@@ -284,11 +352,11 @@ class DownloadManager(QObject):
         self.items_changed.emit()
 
     def discard_session(self) -> None:
-        """Remove the active session file entirely (finished or not)."""
-        self.stop()
+        """Delete the active session from storage, then start a fresh empty one."""
         if self.session is not None:
-            self.session.clear_file()
-            self.session = None
+            self.delete_session(self.session.id)
+        if self.session is None:
+            self.new_session(self.config.downloads_dir, label="Untitled")
         self.items_changed.emit()
 
     # ------------------------------------------------------------------

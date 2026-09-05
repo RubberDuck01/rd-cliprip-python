@@ -23,9 +23,7 @@ def main() -> int:
     stats.register_session()
 
     manager = DownloadManager(config, stats)
-    session = manager.load_last_session()
-    if session is None:
-        manager.new_session(config.downloads_dir)
+    manager.startup_load()
 
     network_monitor = NetworkMonitor()
 
