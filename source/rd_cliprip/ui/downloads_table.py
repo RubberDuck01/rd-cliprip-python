@@ -54,7 +54,7 @@ class DownloadsTable(QTableWidget):
 
         self.setColumnCount(7)
         self.setHorizontalHeaderLabels(
-            ["#", "Name", "Progress", "Speed", "ETA", "Size", "Status"]
+            ["#", "Video", "Progress", "Speed", "ETA", "Size", "Status"]
         )
         self.verticalHeader().setVisible(False)
         self.verticalHeader().setDefaultSectionSize(32)
@@ -66,7 +66,7 @@ class DownloadsTable(QTableWidget):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         header.setMinimumSectionSize(40)
         self.setColumnWidth(_COL_INDEX, 36)
-        self.setColumnWidth(_COL_ITEM, 200)
+        self.setColumnWidth(_COL_ITEM, 320)
         self.setColumnWidth(_COL_PROGRESS, 150)
         self.setColumnWidth(_COL_SPEED, 95)
         self.setColumnWidth(_COL_ETA, 60)
