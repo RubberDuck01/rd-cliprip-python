@@ -66,14 +66,6 @@ class SessionManagerDialog(QDialog):
         self.table.setColumnWidth(_COL_PROGRESS, 170)
         self.table.setColumnWidth(_COL_STATUS, 150)
         self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet(
-            """
-            QTableWidget { gridline-color: transparent; }
-            QTableWidget::item:selected {
-                background-color: rgba(110, 150, 255, 85);
-            }
-            """
-        )
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)

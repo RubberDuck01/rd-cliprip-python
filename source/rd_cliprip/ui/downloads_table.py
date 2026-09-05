@@ -1,11 +1,14 @@
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QMouseEvent, QPalette
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QHeaderView,
     QMenu,
     QProgressBar,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -46,6 +49,56 @@ _BAR_FILL = {
 }
 
 _DASH_COLOR = QColor("#8a8a8a")
+
+
+def _blend(c1: QColor, c2: QColor, t: float) -> QColor:
+    """Mix c1 into c2; t=0 is c1, t=1 is c2."""
+    return QColor(
+        round(c1.red() + (c2.red() - c1.red()) * t),
+        round(c1.green() + (c2.green() - c1.green()) * t),
+        round(c1.blue() + (c2.blue() - c1.blue()) * t),
+    )
+
+
+def _rgba(color: QColor) -> str:
+    return f"rgba({color.red()},{color.green()},{color.blue()},{color.alpha()})"
+
+
+class _BandDelegate(QStyledItemDelegate):
+    """Paint selection / hover as one plain band per row (qBittorrent-like).
+
+    Qt's built-in style draws each selected cell as its own rounded tile.
+    This delegate instead fills the cell with a plain rectangle (adjacent cells
+    merge into a single continuous row band) and never lets the style paint a
+    per-cell selection/focus bubble.
+    """
+
+    def __init__(self, table) -> None:
+        super().__init__(table)
+        self._table = table
+
+    def paint(self, painter, option, index) -> None:
+        row = index.row()
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = not selected and row == self._table._hover_row
+
+        if selected:
+            painter.fillRect(option.rect, self._table._sel_color)
+        elif hovered:
+            painter.fillRect(option.rect, self._table._hover_color)
+
+        opt = QStyleOptionViewItem(option)
+        opt.state &= ~(
+            QStyle.StateFlag.State_Selected
+            | QStyle.StateFlag.State_HasFocus
+            | QStyle.StateFlag.State_MouseOver
+        )
+        opt.backgroundBrush = QBrush()
+        if selected:
+            text_color = self._table._sel_text
+            opt.palette.setColor(QPalette.ColorRole.Text, text_color)
+            opt.palette.setColor(QPalette.ColorRole.HighlightedText, text_color)
+        super().paint(painter, opt, index)
 
 
 class DownloadsTable(QTableWidget):
@@ -89,14 +142,24 @@ class DownloadsTable(QTableWidget):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setAlternatingRowColors(True)
-        self.setStyleSheet(
-            """
-            QTableWidget { gridline-color: transparent; }
-            QTableWidget::item:selected {
-                background-color: rgba(110, 150, 255, 85);
-            }
-            """
+        self.setItemDelegate(_BandDelegate(self))
+
+        # qBittorrent-style: hovering highlights the whole row, not one cell.
+        hover_base = QColor(self.palette().highlight().color())
+        hover_base.setAlpha(55)
+        self._hover_color = hover_base
+        self._hover_fill = _blend(
+            QColor(self.palette().color(QPalette.ColorRole.Window)),
+            QColor(self.palette().highlight().color()),
+            0.25,
         )
+        self._sel_color = QColor(self.palette().highlight().color())
+        self._sel_text = QColor(self.palette().highlightedText().color())
+        self._hover_row = -1
+        self.viewport().setMouseTracking(True)
+        self.viewport().installEventFilter(self)
+        self.selectionModel().selectionChanged.connect(self._on_selection_changed)
+
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         self.cellDoubleClicked.connect(self._on_double_clicked)
@@ -106,6 +169,7 @@ class DownloadsTable(QTableWidget):
     # ------------------------------------------------------------------
 
     def refresh_items(self, items: list[SessionItem]) -> None:
+        self._hover_row = -1
         self.setRowCount(0)
         self._row_for_id.clear()
         self._state_for_id.clear()
@@ -135,8 +199,11 @@ class DownloadsTable(QTableWidget):
         progress.setRange(0, 100)
         progress.setTextVisible(True)
         progress.setValue(max(0, min(100, item.progress)))
-        # Center the bar vertically inside the row and keep it off the cell edges.
+        # Progress is display-only; let mouse events pass through so hover and
+        # row selection work even when the cursor is over the bar.
         progress_host = QWidget()
+        progress_host.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        progress.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         host_layout = QVBoxLayout(progress_host)
         host_layout.setContentsMargins(4, 5, 4, 5)
         host_layout.addWidget(progress)
@@ -219,6 +286,7 @@ class DownloadsTable(QTableWidget):
         if row is not None:
             self.removeRow(row)
             self._reindex()
+        self._hover_row = -1
 
     def _reindex(self) -> None:
         self._row_for_id = {item_id: r for r, item_id in enumerate(self._row_for_id)}
@@ -270,15 +338,30 @@ class DownloadsTable(QTableWidget):
 
         widget = self._progress_for_id.get(item_id)
         if isinstance(widget, QProgressBar):
-            fill = _BAR_FILL.get(state)
-            if fill:
-                widget.setStyleSheet(
-                    "QProgressBar { background: transparent; text-align: center;"
-                    " border: 1px solid rgba(120,120,120,110); border-radius: 3px; }"
-                    f"QProgressBar::chunk {{ background-color: {fill}; border-radius: 2px; }}"
-                )
-            else:
-                widget.setStyleSheet("")
+            widget.setStyleSheet(self._bar_stylesheet(state, None))
+
+    def _bar_stylesheet(self, state: str, band: QColor | None) -> str:
+        """Stylesheet for a progress bar. ``band`` tints the whole track to the
+        row's hover/selection colour (progress cell is a real widget, so the band
+        must be painted on the bar itself rather than composited underneath)."""
+        fill = _BAR_FILL.get(state)
+        if band is None:
+            background = "transparent"
+            text_color = ""
+        else:
+            background = _rgba(band)
+            text_color = (
+                "#ffffff" if band.lightness() < 128 else "#000000"
+            )
+        css = (
+            f"QProgressBar {{ background: {background};"
+            f"{f' color: {text_color};' if text_color else ''}"
+            " text-align: center;"
+            " border: 1px solid rgba(120,120,120,110); border-radius: 3px; }"
+        )
+        if fill:
+            css += f"QProgressBar::chunk {{ background-color: {fill}; border-radius: 2px; }}"
+        return css
 
     @staticmethod
     def _status_text(item: SessionItem) -> str:
@@ -328,6 +411,66 @@ class DownloadsTable(QTableWidget):
         url = self.item_url(item_id)
         if url:
             QApplication.clipboard().setText(url)
+
+    # ------------------------------------------------------------------
+    #  Row hover (qBittorrent-style whole-row highlight)
+    # ------------------------------------------------------------------
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self.viewport():
+            event_type = event.type()
+            if event_type == QEvent.Type.MouseMove and isinstance(event, QMouseEvent):
+                pos = event.position().toPoint()
+                self._set_hover_row(self.rowAt(pos.y()))
+            elif event_type == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+                pos = event.position().toPoint()
+                if self.rowAt(pos.y()) < 0:
+                    self.clearSelection()
+            elif event_type == QEvent.Type.Leave:
+                self._set_hover_row(-1)
+        return super().eventFilter(obj, event)
+
+    def _set_hover_row(self, row: int) -> None:
+        if row == self._hover_row:
+            return
+        old = self._hover_row
+        self._hover_row = row
+        self.viewport().update()
+        self._sync_hosts({old, row})
+
+    def _item_id_for_row(self, row: int) -> str | None:
+        for item_id, r in self._row_for_id.items():
+            if r == row:
+                return item_id
+        return None
+
+    def _sync_hosts(self, rows) -> None:
+        """Tint each Progress bar's track with its row's hover/selection band."""
+        for row in rows:
+            if row < 0 or row >= self.rowCount():
+                continue
+            item_id = self._item_id_for_row(row)
+            if item_id is None:
+                continue
+            if self.selectionModel().isRowSelected(row, self.model().index(0, 0).parent()):
+                band = self._sel_color
+            elif row == self._hover_row:
+                band = self._hover_fill
+            else:
+                band = None
+            bar = self._progress_for_id.get(item_id)
+            if isinstance(bar, QProgressBar):
+                bar.setStyleSheet(
+                    self._bar_stylesheet(self._state_for_id.get(item_id, STATE_QUEUED), band)
+                )
+
+    def _on_selection_changed(self, _selected, _deselected) -> None:
+        rows: set[int] = set()
+        for index in _selected.indexes():
+            rows.add(index.row())
+        for index in _deselected.indexes():
+            rows.add(index.row())
+        self._sync_hosts(rows)
 
     def _on_double_clicked(self, row: int, _col: int) -> None:
         item_id = self.item_id_at(row)
