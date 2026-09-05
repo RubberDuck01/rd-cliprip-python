@@ -42,15 +42,15 @@ class NetworkStatus:
     def display_text(self) -> str:
         """Short human-readable label for the footer pill."""
         if not self.connected:
-            return "● Offline"
-        parts = ["● Online"]
+            return "\u25cf Offline"
+        parts = ["\u25cf Online"]
         if self.ip:
             parts.append(self.ip)
         if self.country_code:
             parts.append(self._flag(self.country_code))
         elif self.country:
             parts.append(self.country)
-        text = "  ·  ".join(parts)
+        text = "  \u2022  ".join(parts)
         if self.vpn_hint:
             text += "  (VPN)"
         return text

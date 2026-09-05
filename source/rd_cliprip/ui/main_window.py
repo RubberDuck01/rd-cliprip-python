@@ -1,6 +1,5 @@
 import os
 import webbrowser
-from html import escape
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QEvent, QTimer, QUrl, pyqtSignal
@@ -24,7 +23,7 @@ from rd_cliprip.controllers.download_manager import DownloadManager
 from rd_cliprip.models.config import Config
 from rd_cliprip.models.stats import Stats
 from rd_cliprip.resources import get_resources_dir
-from rd_cliprip.services.network import NetworkMonitor, country_flag
+from rd_cliprip.services.network import NetworkMonitor
 from rd_cliprip.ui.about_dialog import AboutDialog
 from rd_cliprip.ui.donation_dialog import DonationDialog
 from rd_cliprip.ui.downloads_table import DownloadsTable
@@ -124,6 +123,10 @@ class MainWindow(QMainWindow):
         stats_action = QAction("&My Statistics", self, triggered=self.open_stats)
         stats_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         view_menu.addAction(stats_action)
+        supported_action = QAction(
+            "&Supported Websites", self, triggered=self.open_supported_sites
+        )
+        view_menu.addAction(supported_action)
         view_menu.addSeparator()
         self._always_on_top_action = QAction("&Always on Top", self)
         self._always_on_top_action.setCheckable(True)
@@ -284,11 +287,11 @@ class MainWindow(QMainWindow):
         footer_font.setPointSize(footer_font.pointSize() - 1)
         made_with_label.setFont(footer_font)
         footer_row.addWidget(made_with_label)
-        footer_row.addStretch()
+        footer_row.addStretch(1)
         self.network_label = QLabel("Network: checking\u2026")
         self.network_label.setToolTip("Checking connectivity\u2026")
-        self.network_label.setTextFormat(Qt.TextFormat.RichText)
         footer_row.addWidget(self.network_label)
+        footer_row.addStretch(1)
         version_label = QLabel(f"Version {__version__}")
         version_label.setEnabled(False)
         version_label.setFont(footer_font)
@@ -309,32 +312,10 @@ class MainWindow(QMainWindow):
         self.network_monitor.start(self.config.network_poll_interval)
 
     def _on_network_status(self, status) -> None:
-        self.network_label.setText(self._network_pill_html(status))
+        self.network_label.setText(status.display_text())
         self.network_label.setToolTip(status.tooltip())
         color = "#2e7d32" if status.connected else "#c62828"
         self.network_label.setStyleSheet(f"color: {color};")
-
-    @staticmethod
-    def _network_pill_html(status) -> str:
-        """Rich-text pill. The flag glyph is wrapped in Segoe UI Emoji so Windows
-        renders it as an emoji flag where supported; otherwise it degrades to
-        showing the two-letter code."""
-        if not status.connected:
-            return "&#9679; Offline"
-        parts = ["&#9679; Online"]
-        if status.ip:
-            parts.append(escape(status.ip))
-        flag = country_flag(status.country_code)
-        if flag:
-            parts.append(
-                f'<span style="font-family: \'Segoe UI Emoji\';">{flag}</span>'
-            )
-        elif status.country_code:
-            parts.append(escape(status.country_code))
-        text = "  &middot;  ".join(parts)
-        if status.vpn_hint:
-            text += "  <i>(VPN)</i>"
-        return text
 
     # ------------------------------------------------------------------
     #  Events
@@ -648,6 +629,11 @@ class MainWindow(QMainWindow):
 
     def open_stats(self) -> None:
         StatsDialog(self, self.stats).exec()
+
+    def open_supported_sites(self) -> None:
+        from rd_cliprip.ui.supported_sites_dialog import SupportedSitesDialog
+
+        SupportedSitesDialog(self).exec()
 
     def show_donation_popup(self) -> None:
         if not self.config.i_have_donated:
