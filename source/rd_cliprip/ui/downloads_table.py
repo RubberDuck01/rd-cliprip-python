@@ -39,6 +39,14 @@ _COLORS = {
     STATE_QUEUED: QColor("#555555"),
 }
 
+_BAR_FILL = {
+    STATE_COMPLETED: "#2e7d32",
+    STATE_FAILED: "#c62828",
+    STATE_ACTIVE: "#1565c0",
+}
+
+_DASH_COLOR = QColor("#8a8a8a")
+
 
 class DownloadsTable(QTableWidget):
     retry_requested = pyqtSignal(str)
@@ -136,7 +144,7 @@ class DownloadsTable(QTableWidget):
         status_item.setToolTip(item.error or "")
         self.setItem(row, _COL_STATUS, status_item)
 
-        self._color_row(row, item.state)
+        self._apply_row_style(item.id, row, item.state)
 
     def update_item(self, item: SessionItem) -> None:
         row = self._row_for_id.get(item.id)
@@ -165,7 +173,7 @@ class DownloadsTable(QTableWidget):
             name_cell.setText(item.title)
             name_cell.setToolTip(item.url or item.title)
 
-        self._color_row(row, item.state)
+        self._apply_row_style(item.id, row, item.state)
 
     def update_progress(
         self, item_id: str, percent: int, speed: str, eta: str, total: str
@@ -234,11 +242,40 @@ class DownloadsTable(QTableWidget):
         if item is not None:
             item.setForeground(_COLORS.get(state, _COLORS[STATE_QUEUED]))
 
+    def _apply_row_style(self, item_id: str, row: int, state: str) -> None:
+        """Colour the row's key text (name, size, status) + progress bar by state."""
+        self._color_row(row, state)
+        state_color = _COLORS.get(state, _COLORS[STATE_QUEUED])
+
+        for col in (_COL_ITEM, _COL_SIZE, _COL_STATUS):
+            cell = self.item(row, col)
+            if cell is not None:
+                cell.setForeground(
+                    _DASH_COLOR if cell.text() == _DASH else state_color
+                )
+
+        # Neutral grey for the live-stat dashes.
+        for col in (_COL_SPEED, _COL_ETA):
+            cell = self.item(row, col)
+            if cell is not None and cell.text() == _DASH:
+                cell.setForeground(_DASH_COLOR)
+
+        widget = self._progress_for_id.get(item_id)
+        if isinstance(widget, QProgressBar):
+            fill = _BAR_FILL.get(state)
+            if fill:
+                widget.setStyleSheet(
+                    "QProgressBar { background: transparent;"
+                    " border: 1px solid rgba(120,120,120,110); border-radius: 3px; }"
+                    f"QProgressBar::chunk {{ background-color: {fill}; border-radius: 2px; }}"
+                )
+            else:
+                widget.setStyleSheet("")
+
     @staticmethod
     def _status_text(item: SessionItem) -> str:
         if item.state == STATE_COMPLETED:
-            count = len(item.dest_paths)
-            return f"Saved ({count} file{'s' if count != 1 else ''})"
+            return "Done"
         if item.state == STATE_ACTIVE:
             return "Downloading\u2026"
         if item.state == STATE_FAILED:
