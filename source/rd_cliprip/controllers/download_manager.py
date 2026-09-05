@@ -24,6 +24,7 @@ from rd_cliprip.models.session import (
 from rd_cliprip.services.downloader import (
     fetch_title,
     find_ffmpeg_exe,
+    is_fatal_error,
     run_single_item,
 )
 
@@ -609,11 +610,30 @@ class DownloadManager(QObject):
                 except Exception:
                     pass
             else:
-                self.session.mark_failed(item, str(msg.get("message", "Download failed.")))
+                self._resolve_failure(item, str(msg.get("message", "Download failed.")))
 
             self.session.save()
             self.item_updated.emit(item.id)
             self.items_changed.emit()
+
+    def _resolve_failure(self, item: SessionItem, message: str) -> None:
+        """Mark an item failed, or auto-requeue it when the error is retryable."""
+        retryable = (
+            self.config.auto_retry > 0
+            and item.attempts <= self.config.auto_retry
+            and not is_fatal_error(message)
+        )
+        if not retryable:
+            self.session.mark_failed(item, message)
+            return
+
+        # Transient error: keep it queued so an idle agent picks it up again.
+        item.state = STATE_QUEUED
+        item.progress = 0
+        item.error = ""
+        item.touch()
+        if self._running:
+            self._jobs.put(item.id)
 
     def _try_finish_run(self) -> None:
         """End the run once every queued/in-flight item has resolved."""

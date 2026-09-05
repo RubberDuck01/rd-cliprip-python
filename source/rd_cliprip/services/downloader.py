@@ -31,6 +31,41 @@ _ID_SUFFIX_RE = re.compile(r"\s*\[[^\]]+\]\s*$")
 # ffmpeg "-i" reports container duration on stderr as:  Duration: 01:23:45.67
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+)")
 
+# Error text that means the URL itself is dead/permanently broken. These must
+# never be auto-retried (retrying just hammers a link that will never work).
+_FATAL_HINTS = (
+    "404",
+    "403",
+    "410",
+    "not found",
+    "not available",
+    "is unavailable",
+    "video unavailable",
+    "content unavailable",
+    "media is not available",
+    "no longer exists",
+    "has been removed",
+    "removed by",
+    "private video",
+    "members only",
+    "does not exist",
+    "invalid url",
+    "is not a valid",
+    "unsupported url",
+    "not a valid url",
+    "sign in to confirm",
+    "account terminated",
+    "executable not found",
+)
+
+
+def is_fatal_error(message: str) -> bool:
+    """True when an error message means retrying will never help."""
+    if not message:
+        return True
+    lowered = message.lower()
+    return any(hint in lowered for hint in _FATAL_HINTS)
+
 
 def parse_ffmpeg_duration(text: str) -> int:
     """Extract seconds from ffmpeg's 'Duration: HH:MM:SS.xx' line. 0 if absent."""

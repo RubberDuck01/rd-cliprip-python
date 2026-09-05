@@ -49,6 +49,7 @@ class Config:
                 "clipboard_paste_enabled": True,
                 "max_concurrent_downloads": 1,
                 "remux_to_mp4": True,
+                "auto_retry": 1,
                 "network_indicator_enabled": True,
                 "network_poll_interval": 15,
             },
@@ -100,6 +101,13 @@ class Config:
     @property
     def remux_to_mp4(self) -> bool:
         return bool(self.data["settings"].get("remux_to_mp4", True))
+
+    @property
+    def auto_retry(self) -> int:
+        try:
+            return max(0, min(5, int(self.data["settings"].get("auto_retry", 1))))
+        except (TypeError, ValueError):
+            return 1
 
     @property
     def network_indicator_enabled(self) -> bool:
@@ -155,6 +163,10 @@ class Config:
 
     def set_remux_to_mp4(self, value: bool) -> None:
         self.data["settings"]["remux_to_mp4"] = bool(value)
+        self.save()
+
+    def set_auto_retry(self, value: int) -> None:
+        self.data["settings"]["auto_retry"] = max(0, min(5, int(value)))
         self.save()
 
     def set_network_indicator_enabled(self, value: bool) -> None:
