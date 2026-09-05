@@ -45,7 +45,8 @@ class SessionManagerDialog(QDialog):
 
         info = QLabel(
             "Each URL list you import becomes its own session with its own "
-            "download folder. Pick one to make it active."
+            "download folder. Pick one to make it active, or create an empty "
+            "session to build up by hand."
         )
         info.setWordWrap(True)
         info.setEnabled(False)
@@ -80,10 +81,16 @@ class SessionManagerDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
+        new_empty_btn = QPushButton("New Empty Session")
+        new_empty_btn.clicked.connect(self._new_empty)
+        btn_row.addWidget(new_empty_btn)
         new_btn = QPushButton("New from .txt...")
         new_btn.clicked.connect(self._new_from_txt)
         btn_row.addWidget(new_btn)
         btn_row.addStretch()
+        edit_btn = QPushButton("Edit...")
+        edit_btn.clicked.connect(self._edit_selected)
+        btn_row.addWidget(edit_btn)
         open_btn = QPushButton("Open")
         open_btn.clicked.connect(self._open_selected)
         btn_row.addWidget(open_btn)
@@ -103,6 +110,7 @@ class SessionManagerDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _refresh(self) -> None:
+        previous = self._selected_id()
         sessions = self.manager.stored_sessions()
         active_id = self.manager.session.id if self.manager.session else None
         self.table.setRowCount(0)
@@ -115,6 +123,8 @@ class SessionManagerDialog(QDialog):
         has_sessions = bool(sessions)
         self.table.setVisible(has_sessions)
         self.empty_label.setVisible(not has_sessions)
+        if has_sessions:
+            self._select_id(previous if previous else active_id)
 
     def _append_row(self, row: int, meta: dict, is_active: bool) -> None:
         label = meta.get("label") or "Untitled"
@@ -199,26 +209,67 @@ class SessionManagerDialog(QDialog):
             return None
         return sessions[row].get("id")
 
+    def _select_id(self, session_id: str | None) -> None:
+        if session_id is None:
+            return
+        for row, meta in enumerate(self.manager.stored_sessions()):
+            if meta.get("id") == session_id:
+                self.table.setCurrentCell(row, _COL_LABEL)
+                self.table.scrollToItem(self.table.item(row, _COL_LABEL))
+                break
+
     # ------------------------------------------------------------------
     #  Actions
     # ------------------------------------------------------------------
+
+    def _confirm_stop_current(self, session_id: str | None) -> bool:
+        """Ask before stopping the running session when the action targets it."""
+        if not self.manager.running:
+            return True
+        current = self.manager.session
+        if current is not None and session_id is not None and current.id != session_id:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Downloads in progress",
+            "This stops the current downloads (they can be resumed later). "
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _open_selected(self, *_args) -> None:
         session_id = self._selected_id()
         if session_id is None:
             return
-        if self.manager.running:
-            answer = QMessageBox.question(
-                self,
-                "Downloads in progress",
-                "Opening another session stops the current downloads "
-                "(they can be resumed later). Continue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
+        if not self._confirm_stop_current(session_id):
+            return
         self.manager.open_session(session_id)
+        self._refresh()
+
+    def _edit_selected(self) -> None:
+        session_id = self._selected_id()
+        if session_id is None:
+            return
+        if not self._confirm_stop_current(session_id):
+            return
+        sessions = self.manager.stored_sessions()
+        meta = next((s for s in sessions if s.get("id") == session_id), None)
+        if meta is None:
+            return
+
+        from rd_cliprip.ui.session_edit_dialog import SessionEditDialog
+
+        dialog = SessionEditDialog(
+            self,
+            label=meta.get("label", "") or "Untitled",
+            output_dir=meta.get("output_dir", ""),
+        )
+        if not dialog.exec():
+            return
+        label, output_dir = dialog.values()
+        self.manager.edit_session(session_id, label=label, output_dir=output_dir)
         self._refresh()
 
     def _delete_selected(self) -> None:
@@ -238,6 +289,13 @@ class SessionManagerDialog(QDialog):
             return
         self.manager.delete_session(session_id)
         self._refresh()
+
+    def _new_empty(self) -> None:
+        if not self._confirm_stop_current(None):
+            return
+        created = self.manager.new_empty_session()
+        self._refresh()
+        self._select_id(created.id)
 
     def _new_from_txt(self) -> None:
         # Delegate to the parent window which handles picking + the result popup.

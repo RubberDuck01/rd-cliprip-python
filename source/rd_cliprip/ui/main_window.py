@@ -63,6 +63,9 @@ class MainWindow(QMainWindow):
         if self.manager.session is None:
             self.manager.new_session(self.config.downloads_dir)
 
+        # Initial paint of the loaded/created session.
+        self._on_items_changed()
+
         # Prompt to resume any leftover session.
         session = self.manager.session
         if session is not None and session.remaining() > 0:
@@ -230,8 +233,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(add_group)
 
         # Queue group
-        queue_group = QGroupBox("Download Queue")
-        queue_layout = QVBoxLayout(queue_group)
+        self.queue_group = QGroupBox("Download Queue")
+        queue_layout = QVBoxLayout(self.queue_group)
         queue_layout.setContentsMargins(10, 12, 10, 10)
         queue_layout.setSpacing(6)
 
@@ -268,7 +271,7 @@ class MainWindow(QMainWindow):
         status_row.addWidget(discard_btn)
         queue_layout.addLayout(status_row)
 
-        layout.addWidget(queue_group, stretch=1)
+        layout.addWidget(self.queue_group, stretch=1)
 
         # Footer row
         footer_row = QHBoxLayout()
@@ -488,7 +491,20 @@ class MainWindow(QMainWindow):
         items = session.items if session else []
         self.table.refresh_items(items)
         self._update_summary()
+        self._sync_session_ui()
         self._update_controls()
+
+    def _sync_session_ui(self) -> None:
+        """Show which session is active and which folder it downloads into."""
+        session = self.manager.session
+        if session is None:
+            self.queue_group.setTitle("Download Queue")
+            self.output_input.setText(self.config.downloads_dir)
+            return
+        label = session.label or "Untitled"
+        title = label if len(label) <= 60 else label[:57] + "\u2026"
+        self.queue_group.setTitle(f"Download Queue \u2014 {title}")
+        self.output_input.setText(session.output_dir or self.config.downloads_dir)
 
     def _on_all_finished(self) -> None:
         self._update_controls()
@@ -525,9 +541,16 @@ class MainWindow(QMainWindow):
         directory = QFileDialog.getExistingDirectory(
             self, "Select Downloads Directory", self.output_input.text()
         )
-        if directory:
-            self.output_input.setText(directory)
+        if not directory:
+            return
+        session = self.manager.session
+        if session is None:
             self.config.set_downloads_dir(directory)
+            self.output_input.setText(directory)
+            return
+        # The folder is a property of the active session, not a global default.
+        self.manager.edit_session(session.id, output_dir=directory)
+        self.set_status(f"Download folder for this session changed to {directory}")
 
     def open_downloads_directory(self, raw_path: str | None = None) -> None:
         raw = raw_path or (self.output_input.text() or self.config.downloads_dir).strip()
@@ -566,7 +589,17 @@ class MainWindow(QMainWindow):
     def open_settings(self) -> None:
         dialog = SettingsDialog(self, self.config)
         if dialog.exec():
-            self.output_input.setText(self.config.downloads_dir)
+            # Settings' folder is the default for NEW sessions; also adopt it for
+            # a still-blank ad-hoc session that has no txt source yet.
+            session = self.manager.session
+            if (
+                session is not None
+                and not session.source_file
+                and not session.items
+                and session.output_dir
+            ):
+                self.manager.edit_session(session.id, output_dir=self.config.downloads_dir)
+            self._sync_session_ui()
             self._update_format_hint()
             self._apply_network_preferences()
             self.set_status("Settings saved!")

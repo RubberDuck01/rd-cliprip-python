@@ -152,6 +152,38 @@ class DownloadManager(QObject):
             self.new_session(self.config.downloads_dir, label="Untitled")
         self.items_changed.emit()
 
+    def edit_session(
+        self,
+        session_id: str,
+        label: str | None = None,
+        output_dir: str | None = None,
+    ) -> bool:
+        """Rename a session and/or point it at a different download folder.
+
+        Changing the folder only affects new downloads; already-finished files
+        stay where they are.
+        """
+        stored = DownloadSession.load(session_id)
+        if stored is None:
+            return False
+        if label is not None and label.strip():
+            stored.label = label.strip()
+        if output_dir is not None and str(output_dir).strip():
+            stored.output_dir = str(output_dir).strip()
+        stored.save()
+
+        current = self.session
+        if current is not None and current.id == session_id:
+            current.label = stored.label
+            current.output_dir = stored.output_dir
+            current.save()
+            self.items_changed.emit()
+        return True
+
+    def new_empty_session(self, label: str = "Untitled") -> DownloadSession:
+        """Create a fresh, empty session and make it active."""
+        return self.new_session(self.config.downloads_dir, label=label)
+
     # ------------------------------------------------------------------
     #  Adding URLs
     # ------------------------------------------------------------------
