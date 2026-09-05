@@ -89,6 +89,14 @@ class DownloadsTable(QTableWidget):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setAlternatingRowColors(True)
+        self.setStyleSheet(
+            """
+            QTableWidget { gridline-color: transparent; }
+            QTableWidget::item:selected {
+                background-color: rgba(110, 150, 255, 85);
+            }
+            """
+        )
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         self.cellDoubleClicked.connect(self._on_double_clicked)
@@ -265,7 +273,7 @@ class DownloadsTable(QTableWidget):
             fill = _BAR_FILL.get(state)
             if fill:
                 widget.setStyleSheet(
-                    "QProgressBar { background: transparent;"
+                    "QProgressBar { background: transparent; text-align: center;"
                     " border: 1px solid rgba(120,120,120,110); border-radius: 3px; }"
                     f"QProgressBar::chunk {{ background-color: {fill}; border-radius: 2px; }}"
                 )
