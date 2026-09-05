@@ -1,5 +1,4 @@
 import threading
-from datetime import datetime
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
@@ -14,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 
 from rd_cliprip.services import supported_sites
+from rd_cliprip.utils import format_dt_short
 
 
 class SupportedSitesDialog(QDialog):
@@ -84,13 +84,8 @@ class SupportedSitesDialog(QDialog):
     def _refresh_info(self) -> None:
         count = len(self._sites)
         if self._fetched_at:
-            try:
-                when = datetime.fromisoformat(self._fetched_at).strftime("%Y-%m-%d %H:%M")
-            except Exception:
-                when = self._fetched_at
-            self.info_label.setText(
-                f"{count} supported websites  \u2022  list fetched {when}"
-            )
+            when = format_dt_short(self._fetched_at)
+            self.info_label.setText(f"{count} supported websites  \u2022  list fetched {when}")
         elif count:
             self.info_label.setText(f"{count} supported websites")
         else:

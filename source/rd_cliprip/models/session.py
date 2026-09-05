@@ -165,7 +165,7 @@ class DownloadSession:
             name = Path(source_file).stem.strip()
             if name:
                 return name
-        return f"Session {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        return f"Session {datetime.now().strftime('%d/%m/%Y %H:%M')}"
 
     # ------------------------------------------------------------------
     #  Persistence

@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
@@ -18,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from rd_cliprip.controllers.download_manager import DownloadManager
+from rd_cliprip.utils import format_dt_short
 
 _COL_LABEL = 0
 _COL_OUTPUT = 1
@@ -129,11 +128,7 @@ class SessionManagerDialog(QDialog):
     def _append_row(self, row: int, meta: dict, is_active: bool) -> None:
         label = meta.get("label") or "Untitled"
         source_file = meta.get("source_file") or ""
-        created = meta.get("created_at", "")
-        try:
-            created = datetime.fromisoformat(created).strftime("%Y-%m-%d %H:%M")
-        except Exception:
-            pass
+        created = format_dt_short(meta.get("created_at", ""))
 
         # Session name
         label_item = QTableWidgetItem(label)

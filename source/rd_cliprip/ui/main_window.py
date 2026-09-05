@@ -291,7 +291,7 @@ class MainWindow(QMainWindow):
         self.network_label = QLabel("Network: checking\u2026")
         self.network_label.setToolTip("Checking connectivity\u2026")
         footer_row.addWidget(self.network_label)
-        footer_row.addStretch(1)
+        footer_row.addSpacing(18)
         version_label = QLabel(f"Version {__version__}")
         version_label.setEnabled(False)
         version_label.setFont(footer_font)

@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 )
 
 from rd_cliprip.models.stats import Stats
+from rd_cliprip.utils import format_dt_short
 
 
 class StatsDialog(QDialog):
@@ -43,11 +44,12 @@ class StatsDialog(QDialog):
         timeline_form.setContentsMargins(10, 12, 10, 10)
         timeline_form.setSpacing(6)
         timeline_form.addRow(
-            "Last run:", QLabel(self.format_date(self.stats.data.get("last_run_date", "N/A")))
+            "Last run:",
+            QLabel(format_dt_short(self.stats.data.get("last_run_date", "")) or "N/A"),
         )
         timeline_form.addRow(
             "Profile created:",
-            QLabel(self.format_date(self.stats.data.get("created_date", "N/A"))),
+            QLabel(format_dt_short(self.stats.data.get("created_date", "")) or "N/A"),
         )
         layout.addWidget(timeline_group)
 
@@ -60,13 +62,3 @@ class StatsDialog(QDialog):
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
-
-    @staticmethod
-    def format_date(iso_string: str) -> str:
-        try:
-            from datetime import datetime
-
-            dt = datetime.fromisoformat(iso_string)
-            return dt.strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            return iso_string
