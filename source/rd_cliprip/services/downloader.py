@@ -230,6 +230,36 @@ def get_playlist_info(url: str) -> tuple[bool, str, int]:
         return False, "", 0
 
 
+def fetch_title(url: str) -> str | None:
+    """Fetch a display title for a URL (single video or playlist) or None.
+
+    Uses a flat, no-download query so it stays light even for playlists.
+    """
+    ytdlp = find_ytdlp_exe()
+    if not ytdlp:
+        return None
+
+    result = _run_tool(
+        [ytdlp, "--flat-playlist", "--dump-single-json", "--no-warnings", url],
+        timeout=20,
+    )
+    if result is None or result.returncode != 0:
+        return None
+
+    try:
+        data = json.loads(_decode_output(result.stdout))
+    except Exception:
+        return None
+
+    if not isinstance(data, dict):
+        return None
+    if data.get("_type") == "playlist":
+        title = str(data.get("title") or data.get("playlist_title") or "").strip()
+    else:
+        title = str(data.get("title") or data.get("fulltitle") or "").strip()
+    return title or None
+
+
 def get_video_info(url: str) -> dict[str, Any]:
     """Get title, duration, filesize for a single video."""
     metadata = get_video_metadata(url)

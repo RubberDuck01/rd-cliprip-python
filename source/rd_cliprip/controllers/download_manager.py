@@ -22,6 +22,7 @@ from rd_cliprip.models.session import (
     set_active_session,
 )
 from rd_cliprip.services.downloader import (
+    fetch_title,
     find_ffmpeg_exe,
     run_single_item,
 )
@@ -59,10 +60,28 @@ class DownloadManager(QObject):
         self._procs: dict[str, Any] = {}  # item_id -> Popen
         self._kill_cause: dict[str, str] = {}  # item_id -> 'stop' | 'cancel' | 'remove'
 
+        # Title enrichment: a tiny independent pool that resolves display titles
+        # for queued URLs. Its results use a separate queue so probing never
+        # blocks download progress or run-completion detection.
+        self._meta_jobs: queue.Queue[str] = queue.Queue()
+        self._meta_results: queue.Queue[dict[str, Any]] = queue.Queue()
+        self._title_tried: set[str] = set()
+        self._meta_threads: list[threading.Thread] = []
+        for _ in range(2):
+            thread = threading.Thread(target=self._meta_loop, daemon=True)
+            thread.start()
+            self._meta_threads.append(thread)
+
         self._timer = QTimer(self)
         self._timer.setInterval(_POLL_INTERVAL_MS)
         self._timer.timeout.connect(self._poll_results)
         self._timer.start()
+
+        # Debounce session writes so title enrichments don't hammer the disk.
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(1500)
+        self._save_timer.timeout.connect(self._flush_session)
 
     # ------------------------------------------------------------------
     #  Session management
@@ -79,6 +98,7 @@ class DownloadManager(QObject):
             session.save()
             set_active_session(session.id)
         self.items_changed.emit()
+        self._enqueue_title_probes()
 
     def _open_by_id(self, session_id: str) -> DownloadSession | None:
         session = DownloadSession.load(session_id)
@@ -210,6 +230,7 @@ class DownloadManager(QObject):
             for item in added:
                 self._jobs.put(item.id)
         self.items_changed.emit()
+        self._enqueue_title_probes()
         return added
 
     def import_txt(self, path: str, output_dir: str | None = None) -> tuple[int, int]:
@@ -247,6 +268,7 @@ class DownloadManager(QObject):
         session.save()
         set_active_session(session.id)
         self.items_changed.emit()
+        self._enqueue_title_probes()
         return len(unique), duplicates
 
     # ------------------------------------------------------------------
@@ -423,6 +445,36 @@ class DownloadManager(QObject):
             except queue.Empty:
                 break
 
+    # ------------------------------------------------------------------
+    #  Title enrichment pool
+    # ------------------------------------------------------------------
+
+    def _enqueue_title_probes(self) -> None:
+        """Queue titles for any resumable item that doesn't have one yet."""
+        if self.session is None:
+            return
+        for item in self.session.items:
+            if item.title or item.id in self._title_tried:
+                continue
+            if item.state not in RESUMABLE_STATES:
+                continue
+            self._title_tried.add(item.id)
+            self._meta_jobs.put(item.id)
+
+    def _meta_loop(self) -> None:
+        while True:
+            try:
+                item_id = self._meta_jobs.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            item = self.session.get_item(item_id) if self.session else None
+            if item is None or item.title:
+                continue
+            title = fetch_title(item.url)
+            self._meta_results.put(
+                {"kind": "title", "item_id": item_id, "title": title or ""}
+            )
+
     def _on_progress(self, item_id: str, percent: int) -> None:
         self._results.put({"kind": "progress", "item_id": item_id, "percent": percent})
 
@@ -474,12 +526,35 @@ class DownloadManager(QObject):
 
         while True:
             try:
+                msg = self._meta_results.get_nowait()
+            except queue.Empty:
+                break
+            self._handle_meta(msg)
+
+        while True:
+            try:
                 msg = self._results.get_nowait()
             except queue.Empty:
                 break
             self._handle_result(msg)
 
         self._try_finish_run()
+
+    def _handle_meta(self, msg: dict[str, Any]) -> None:
+        item = self.session.get_item(str(msg.get("item_id", ""))) if self.session else None
+        if item is None:
+            return
+        title = str(msg.get("title", "")).strip()
+        if title:
+            item.title = title
+            item.touch()
+            self.item_updated.emit(item.id)
+            if not self._save_timer.isActive():
+                self._save_timer.start()
+
+    def _flush_session(self) -> None:
+        if self.session is not None:
+            self.session.save()
 
     def _handle_result(self, msg: dict[str, Any]) -> None:
         item = self.session.get_item(str(msg.get("item_id", ""))) if self.session else None
