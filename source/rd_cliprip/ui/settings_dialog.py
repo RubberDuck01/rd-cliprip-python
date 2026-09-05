@@ -73,7 +73,7 @@ class SettingsDialog(QDialog):
         self.retry_spin = QSpinBox()
         self.retry_spin.setRange(0, 5)
         self.retry_spin.setValue(self.config.auto_retry)
-        retry_hint = QLabel("(dead links are never retried; 0 = off)")
+        retry_hint = QLabel("(0 = no automatic retries)")
         retry_hint.setEnabled(False)
         retry_row = QHBoxLayout()
         retry_row.setSpacing(6)
@@ -81,6 +81,18 @@ class SettingsDialog(QDialog):
         retry_row.addWidget(retry_hint)
         retry_row.addStretch()
         proc_form.addRow("Auto-retry failed downloads:", retry_row)
+        retry_desc = QLabel(
+            "How many times a failed download is retried before it is marked as "
+            "Failed. Retried items stay in the queue; only a few cases are never "
+            "retried automatically (e.g. 404 / video removed / private or invalid "
+            "links). Set to 0 to disable and only retry manually."
+        )
+        retry_desc.setWordWrap(True)
+        retry_desc.setEnabled(False)
+        retry_font = retry_desc.font()
+        retry_font.setPointSize(retry_font.pointSize() - 1)
+        retry_desc.setFont(retry_font)
+        proc_form.addRow(retry_desc)
 
         self.format_combo = QComboBox()
         self.format_combo.addItems(["MP4", "MKV", "WebM"])
