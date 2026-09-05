@@ -1,22 +1,44 @@
 import json
+import locale
 import re
+import shutil
 import subprocess
 import sys
-import locale
+import tempfile
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any
-from PyQt6.QtCore import QObject, pyqtSignal
 
 _PROGRESS_RE = re.compile(r"(\d{1,3}(?:\.\d+)?)%")
 YTDLP_EXE = "yt-dlp.exe"
 YTDLP_DOWNLOAD_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+FFMPEG_EXE = "ffmpeg.exe"
+FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
 # Suppress the console window that would otherwise flash on Windows when
 # spawning child processes from a --windowed PyInstaller bundle.
 _SUBPROCESS_FLAGS: dict = (
     {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 )
+
+# File extensions we treat as finished media output during finalize.
+VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv", ".ts", ".m4v"}
+
+# Strip a trailing yt-dlp id suffix: "Title [aBc123]" -> "Title"
+_ID_SUFFIX_RE = re.compile(r"\s*\[[^\]]+\]\s*$")
+
+# ffmpeg "-i" reports container duration on stderr as:  Duration: 01:23:45.67
+_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+)")
+
+
+def parse_ffmpeg_duration(text: str) -> int:
+    """Extract seconds from ffmpeg's 'Duration: HH:MM:SS.xx' line. 0 if absent."""
+    match = _DURATION_RE.search(text or "")
+    if not match:
+        return 0
+    h, m, s = (int(g) for g in match.groups())
+    return h * 3600 + m * 60 + s
 
 
 def _decode_output(raw: bytes) -> str:
@@ -46,8 +68,19 @@ def get_tools_ytdlp_path() -> Path:
     return get_tools_dir() / YTDLP_EXE
 
 
+def get_tools_ffmpeg_path() -> Path:
+    return get_tools_dir() / FFMPEG_EXE
+
+
 def find_ytdlp_exe() -> str | None:
     path = get_tools_ytdlp_path()
+    if path.exists():
+        return str(path)
+    return None
+
+
+def find_ffmpeg_exe() -> str | None:
+    path = get_tools_ffmpeg_path()
     if path.exists():
         return str(path)
     return None
@@ -126,6 +159,47 @@ def update_ytdlp() -> tuple[bool, str]:
     if result.returncode == 0:
         return True, output or "yt-dlp update command completed."
     return False, output or "yt-dlp update failed."
+
+
+def _extract_ffmpeg(zip_path: Path, destination: Path) -> None:
+    with zipfile.ZipFile(zip_path) as archive:
+        ffmpeg_member = next(
+            (
+                name
+                for name in archive.namelist()
+                if name.lower().endswith("/bin/ffmpeg.exe")
+            ),
+            None,
+        )
+        if ffmpeg_member is None:
+            raise FileNotFoundError("ffmpeg.exe was not found in the downloaded archive.")
+        with archive.open(ffmpeg_member) as source, destination.open("wb") as target:
+            target.write(source.read())
+
+
+def install_or_update_ffmpeg() -> tuple[bool, str]:
+    """Download ffmpeg (gyan.dev essentials build) and install it into tools/."""
+    destination = get_tools_ffmpeg_path()
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "ffmpeg.zip"
+            with urllib.request.urlopen(FFMPEG_DOWNLOAD_URL, timeout=60) as response:
+                archive_path.write_bytes(response.read())
+            _extract_ffmpeg(archive_path, destination)
+        return True, f"FFmpeg installed to {destination}"
+    except Exception as ex:
+        return False, f"Failed to install or update FFmpeg: {ex}"
+
+
+def get_ffmpeg_version() -> str | None:
+    ffmpeg = find_ffmpeg_exe()
+    if not ffmpeg:
+        return None
+    result = _run_tool([ffmpeg, "-version"], timeout=10)
+    if result is not None and result.returncode == 0:
+        lines = _decode_output(result.stdout).splitlines()
+        return lines[0].strip() if lines else None
+    return None
 
 
 def get_playlist_info(url: str) -> tuple[bool, str, int]:
@@ -211,23 +285,36 @@ def build_ytdlp_args(
     preferred_resolution: str,
     embed_subs: bool,
     cookies_path: str | None = None,
+    output_template: str | None = None,
+    ffmpeg_location: str | None = None,
+    remux_to_mp4: bool = False,
+    no_playlist: bool = True,
 ) -> list[str]:
-    """Build the yt-dlp argument list for video downloads."""
+    """Build the yt-dlp argument list for video downloads.
+
+    ``output_template`` may be an absolute path template (e.g. a staging dir)
+    or None to fall back to ``<output_dir>/%(title).200s.%(ext)s``.
+    """
     ytdlp = find_ytdlp_exe()
     if not ytdlp:
         raise RuntimeError("yt-dlp is not installed.")
+
+    if output_template is None:
+        output_template = "%(title).200s.%(ext)s"
 
     args = [
         ytdlp,
         "--newline",
         "--progress",
         "--no-simulate",
-        "--no-playlist",
         "--no-check-certificates",
         "-o",
-        str(Path(output_dir) / "%(title).200s.%(ext)s"),
+        str(Path(output_dir) / output_template),
         url,
     ]
+
+    if no_playlist:
+        args.insert(2, "--no-playlist")
 
     # Format selection for video
     if preferred_format == "mp4":
@@ -254,6 +341,16 @@ def build_ytdlp_args(
         args.insert(2, "--cookies")
         args.insert(3, cookies_path)
 
+    # ffmpeg location (for merging/remuxing)
+    if ffmpeg_location:
+        args.insert(2, "--ffmpeg-location")
+        args.insert(3, ffmpeg_location)
+
+    # Remux final container to MP4 (needs ffmpeg)
+    if remux_to_mp4:
+        args.insert(2, "--remux-video")
+        args.insert(3, "mp4")
+
     return args
 
 
@@ -263,117 +360,229 @@ def _parse_resolution(res: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-#  Download worker (runs yt-dlp in a subprocess on a QThread)
+#  Staging + finalize helpers
 # ---------------------------------------------------------------------------
 
-class DownloadWorker(QObject):
-    progress = pyqtSignal(int)
-    finished = pyqtSignal(str)
-    error = pyqtSignal(str)
-    output_file = pyqtSignal(str)
-    download_size_mb = pyqtSignal(float)  # emitted once after process exits
+def clean_name(name: str) -> str:
+    """Remove a trailing yt-dlp id suffix: 'Title [aBc123]' -> 'Title'."""
+    cleaned = _ID_SUFFIX_RE.sub("", name).strip()
+    return cleaned or name.strip()
 
-    def __init__(
-        self,
-        url: str,
-        output_dir: str,
-        preferred_format: str,
-        preferred_resolution: str,
-        embed_subs: bool,
-        is_playlist: bool = False,
-        cookies_enabled: bool = False,
-        cookies_path: str = "",
-    ) -> None:
-        super().__init__()
-        self.url = url
-        self.output_dir = output_dir
-        self.preferred_format = (preferred_format or "mp4").lower()
-        self.preferred_resolution = preferred_resolution or "1080p"
-        self.embed_subs = embed_subs
-        self.is_playlist = is_playlist
-        self.cookies_enabled = cookies_enabled
-        self.cookies_path = cookies_path
 
-    def run(self) -> None:
-        ytdlp = find_ytdlp_exe()
-        if not ytdlp:
-            self.error.emit("yt-dlp executable not found!")
-            return
+def unique_dest_path(dest_dir: Path, stem: str, suffix: str) -> Path:
+    """Return a non-colliding path, appending (1), (2), ... when needed."""
+    dest = dest_dir / f"{stem}{suffix}"
+    counter = 1
+    while dest.exists():
+        dest = dest_dir / f"{stem} ({counter}){suffix}"
+        counter += 1
+    return dest
 
-        # Snapshot existing video files so we can diff after download
-        output_path = Path(self.output_dir)
-        video_exts = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv"}
+
+def finalize_download(staging_dir: Path, output_dir: Path) -> tuple[list[str], float]:
+    """Move every finished media file out of the staging dir into the output dir.
+
+    Files are renamed to a clean title (id suffix stripped) and de-duplicated.
+    Returns (list of final file paths, total size in MB).
+    """
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+
+    dest_paths: list[str] = []
+    total_size_mb = 0.0
+
+    try:
+        files = [
+            f
+            for f in staging_dir.rglob("*")
+            if f.is_file() and f.suffix.lower() in VIDEO_EXTS
+        ]
+    except Exception:
+        files = []
+
+    for src in sorted(files, key=lambda f: str(f).lower()):
         try:
-            before_files: set[str] = {
-                str(f)
-                for f in output_path.rglob("*")
-                if f.is_file() and f.suffix.lower() in video_exts
-            }
+            clean_stem = clean_name(src.stem)
+            dest = unique_dest_path(output, clean_stem, src.suffix)
+            shutil.move(str(src), str(dest))
+            dest_paths.append(str(dest))
+            try:
+                total_size_mb += dest.stat().st_size / (1024 * 1024)
+            except Exception:
+                pass
         except Exception:
-            before_files = set()
+            continue
 
-        output_template = (
-            "%(playlist_title)s/%(title).200s.%(ext)s"
-            if self.is_playlist
-            else "%(title).200s.%(ext)s"
+    return dest_paths, total_size_mb
+
+
+def probe_duration(path: Path, ffmpeg_exe: str) -> int:
+    """Best-effort media duration in seconds from an ffmpeg -i header probe."""
+    if not ffmpeg_exe:
+        return 0
+    try:
+        result = subprocess.run(
+            [ffmpeg_exe, "-i", str(path)],
+            capture_output=True,
+            timeout=20,
+            **_SUBPROCESS_FLAGS,
         )
+    except Exception:
+        return 0
+    text = _decode_output(result.stdout or b"") + _decode_output(result.stderr or b"")
+    return parse_ffmpeg_duration(text)
 
+
+# ---------------------------------------------------------------------------
+#  Single-item download job (runs in a plain worker thread)
+# ---------------------------------------------------------------------------
+
+def run_single_item(
+    item_id: str,
+    url: str,
+    staging_dir: Path,
+    output_dir: str,
+    preferred_format: str,
+    preferred_resolution: str,
+    embed_subs: bool,
+    cookies_enabled: bool = False,
+    cookies_path: str = "",
+    allow_playlist: bool = True,
+    remux_to_mp4: bool = False,
+    ffmpeg_location: str | None = None,
+    ffmpeg_exe: str | None = None,
+    on_progress: Any = None,
+    register_proc: Any = None,
+    unregister_proc: Any = None,
+) -> dict[str, Any]:
+    """Download one URL into ``staging_dir`` and finalize it into ``output_dir``.
+
+    ``register_proc``/``unregister_proc`` are optional callables used by the
+    caller to track the live subprocess handle (for cancellation).
+    Returns a result dict with: item_id, status ("completed"/"failed"),
+    message, rc, dest_paths, size_mb, duration_sec.
+    """
+    ytdlp = find_ytdlp_exe()
+    if not ytdlp:
+        return {
+            "item_id": item_id,
+            "status": "failed",
+            "message": "yt-dlp executable not found!",
+            "rc": -1,
+            "dest_paths": [],
+            "size_mb": 0.0,
+            "duration_sec": 0,
+        }
+
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    output_template = "%(title)s [%(id)s].%(ext)s"
+
+    try:
         args = build_ytdlp_args(
-            url=self.url,
-            output_dir=self.output_dir,
-            preferred_format=self.preferred_format,
-            preferred_resolution=self.preferred_resolution,
-            embed_subs=self.embed_subs,
-            cookies_path=self.cookies_path if self.cookies_enabled else None,
+            url=url,
+            output_dir=str(staging_dir),
+            preferred_format=preferred_format,
+            preferred_resolution=preferred_resolution,
+            embed_subs=embed_subs,
+            cookies_path=cookies_path if cookies_enabled else None,
+            output_template=output_template,
+            ffmpeg_location=ffmpeg_location,
+            remux_to_mp4=remux_to_mp4,
+            no_playlist=not allow_playlist,
         )
+    except Exception as ex:
+        return {
+            "item_id": item_id,
+            "status": "failed",
+            "message": f"Failed to build yt-dlp arguments: {ex}",
+            "rc": -1,
+            "dest_paths": [],
+            "size_mb": 0.0,
+            "duration_sec": 0,
+        }
 
-        # Override the output template with the playlist-aware one
-        # Remove the old -o and add our custom one
-        for i, arg in enumerate(args):
-            if arg == "-o":
-                args[i + 1] = str(output_path / output_template)
-                break
+    proc: subprocess.Popen | None = None
+    try:
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            **_SUBPROCESS_FLAGS,
+        )
+    except Exception as ex:
+        return {
+            "item_id": item_id,
+            "status": "failed",
+            "message": f"Failed to start yt-dlp: {ex}",
+            "rc": -1,
+            "dest_paths": [],
+            "size_mb": 0.0,
+            "duration_sec": 0,
+        }
 
-        if not self.is_playlist:
-            # --no-playlist is already in build_ytdlp_args; for playlists we remove it
-            if "--no-playlist" in args:
-                args.remove("--no-playlist")
-
+    if register_proc:
         try:
-            proc = subprocess.Popen(
-                args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                **_SUBPROCESS_FLAGS,
-            )
-        except Exception as ex:
-            self.error.emit(f"Failed to start yt-dlp: {ex}")
-            return
+            register_proc(item_id, proc)
+        except Exception:
+            pass
 
-        last_line = ""
+    last_line = ""
+    try:
         assert proc.stdout is not None
         for raw_line in proc.stdout:
             line = _decode_output(raw_line).strip()
-            last_line = line
+            if line:
+                last_line = line
             match = _PROGRESS_RE.search(line)
-            if match:
-                self.progress.emit(int(float(match.group(1))))
-            # Detect output file destination from yt-dlp output
-            if "[download] Destination:" in line:
-                dest = line.split("Destination:", 1)[-1].strip()
-                self.output_file.emit(dest)
-
-        rc = proc.wait()
-        if rc == 0:
-            # Compute size of newly created video files
-            total_size_mb = 0.0
+            if match and on_progress:
+                try:
+                    on_progress(item_id, int(float(match.group(1))))
+                except Exception:
+                    pass
+    finally:
+        if unregister_proc:
             try:
-                for f in output_path.rglob("*"):
-                    if f.is_file() and f.suffix.lower() in video_exts and str(f) not in before_files:
-                        total_size_mb += f.stat().st_size / (1024 * 1024)
+                unregister_proc(item_id)
             except Exception:
                 pass
-            self.download_size_mb.emit(total_size_mb)
-            self.finished.emit("Download completed successfully!")
-        else:
-            self.error.emit(last_line or f"yt-dlp failed with exit code: {rc}")
+
+    rc = proc.wait()
+
+    if rc == 0:
+        dest_paths, size_mb = finalize_download(staging_dir, Path(output_dir))
+        if dest_paths:
+            duration_sec = 0
+            if ffmpeg_exe:
+                for p in dest_paths:
+                    try:
+                        duration_sec += probe_duration(Path(p), ffmpeg_exe)
+                    except Exception:
+                        pass
+            return {
+                "item_id": item_id,
+                "status": "completed",
+                "message": f"Downloaded {len(dest_paths)} file(s).",
+                "rc": rc,
+                "dest_paths": dest_paths,
+                "size_mb": size_mb,
+                "duration_sec": duration_sec,
+            }
+        return {
+            "item_id": item_id,
+            "status": "failed",
+            "message": last_line or "yt-dlp finished but no video file was found.",
+            "rc": rc,
+            "dest_paths": [],
+            "size_mb": 0.0,
+            "duration_sec": 0,
+        }
+
+    return {
+        "item_id": item_id,
+        "status": "failed",
+        "message": last_line or f"yt-dlp failed with exit code: {rc}",
+        "rc": rc,
+        "dest_paths": [],
+        "size_mb": 0.0,
+        "duration_sec": 0,
+    }

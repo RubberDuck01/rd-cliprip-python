@@ -432,3 +432,7 @@ FodyWeavers.xsd
 build/*
 dist/*
 *.spec
+
+# app-managed runtime tools (downloaded by the app into these folders)
+tools/*
+source/tools/*

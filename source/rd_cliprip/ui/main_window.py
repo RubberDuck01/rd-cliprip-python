@@ -1,53 +1,75 @@
 import os
-import re as _re
 import webbrowser
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QEvent, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QDesktopServices, QKeySequence, QPixmap
+from PyQt6.QtCore import Qt, QEvent, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QAction, QDesktopServices, QKeySequence, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
-    QDialog,
     QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QProgressBar,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from rd_cliprip.controllers.download_manager import DownloadManager
 from rd_cliprip.models.config import Config
 from rd_cliprip.models.stats import Stats
+from rd_cliprip.resources import get_resources_dir
+from rd_cliprip.services.network import NetworkMonitor
 from rd_cliprip.ui.about_dialog import AboutDialog
 from rd_cliprip.ui.donation_dialog import DonationDialog
+from rd_cliprip.ui.downloads_table import DownloadsTable
+from rd_cliprip.ui.ffmpeg_dialog import FfmpegDialog
 from rd_cliprip.ui.settings_dialog import SettingsDialog
 from rd_cliprip.ui.stats_dialog import StatsDialog
 from rd_cliprip.ui.update_dialog import UpdateAvailableDialog
 from rd_cliprip.ui.ytdlp_dialog import YtdlpDialog
-from rd_cliprip.resources import get_resources_dir
 from rd_cliprip.version import __version__
 
 
 class MainWindow(QMainWindow):
-    download_requested = pyqtSignal(str, str)
-
-    def __init__(self, config: Config, stats: Stats) -> None:
+    def __init__(
+        self,
+        config: Config,
+        stats: Stats,
+        manager: DownloadManager,
+        network_monitor: NetworkMonitor | None = None,
+    ) -> None:
         super().__init__()
         self.config = config
         self.stats = stats
+        self.manager = manager
+        self.network_monitor = network_monitor
         self.setWindowTitle("Rubber Duck's ClipRip")
-        self.resize(720, 500)
+        self.resize(820, 560)
 
         self._build_menu()
         self._build_ui()
+
+        # Manager wiring
+        self.manager.item_updated.connect(self._on_item_updated)
+        self.manager.items_changed.connect(self._on_items_changed)
+        self.manager.status_message.connect(self.set_status)
+        self.manager.all_finished.connect(self._on_all_finished)
+        if self.manager.session is None:
+            self.manager.new_session(self.config.downloads_dir)
+
+        # Prompt to resume any leftover session.
+        session = self.manager.session
+        if session is not None and session.remaining() > 0:
+            QTimer.singleShot(0, self._prompt_resume_session)
+
+        self._setup_network_monitor()
+        self._update_controls()
+        self.set_status("Ready!")
 
     # ------------------------------------------------------------------
     #  Menu bar
@@ -58,6 +80,12 @@ class MainWindow(QMainWindow):
 
         # File
         file_menu = menubar.addMenu("&File")
+        import_action = QAction("&Import URL List (.txt)...", self, triggered=self.import_url_list)
+        import_action.setShortcut(QKeySequence("Ctrl+O"))
+        file_menu.addAction(import_action)
+        self._resume_action = QAction("&Resume Last Session", self, triggered=self.resume_last_session)
+        file_menu.addAction(self._resume_action)
+        file_menu.addSeparator()
         open_action = QAction(
             "&Open Downloads Directory", self, triggered=self.open_downloads_directory
         )
@@ -73,7 +101,7 @@ class MainWindow(QMainWindow):
 
         # Edit
         edit_menu = menubar.addMenu("&Edit")
-        clear_action = QAction("&Clear Queue", self, triggered=self.clear_queue)
+        clear_action = QAction("&Clear Finished Downloads", self, triggered=self.clear_finished)
         clear_action.setShortcut(QKeySequence("Ctrl+Shift+Del"))
         edit_menu.addAction(clear_action)
         edit_menu.addSeparator()
@@ -98,6 +126,9 @@ class MainWindow(QMainWindow):
         tools_menu = menubar.addMenu("&Tools")
         tools_menu.addAction(
             QAction("&yt-dlp Settings", self, triggered=self.open_ytdlp_manager)
+        )
+        tools_menu.addAction(
+            QAction("&FFmpeg Settings", self, triggered=self.open_ffmpeg_manager)
         )
 
         # Help
@@ -151,11 +182,11 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(subtitle_label)
         layout.addLayout(header_layout)
 
-        # Download group
-        download_group = QGroupBox("New Download")
-        download_form = QFormLayout(download_group)
-        download_form.setContentsMargins(10, 12, 10, 10)
-        download_form.setSpacing(6)
+        # Add-to-queue group
+        add_group = QGroupBox("Add to Queue")
+        add_form = QFormLayout(add_group)
+        add_form.setContentsMargins(10, 12, 10, 10)
+        add_form.setSpacing(6)
 
         self.format_hint_label = QLabel()
         hint_font = self.format_hint_label.font()
@@ -164,17 +195,23 @@ class MainWindow(QMainWindow):
         self.format_hint_label.setFont(hint_font)
         self.format_hint_label.setEnabled(False)
         self._update_format_hint()
-        download_form.addRow(self.format_hint_label)
+        add_form.addRow(self.format_hint_label)
 
         url_row = QHBoxLayout()
         url_row.setSpacing(6)
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("https://www.youtube.com/watch?v=...")
+        self.url_input.setPlaceholderText(
+            "Paste a video / playlist URL, then click Add to Queue"
+        )
+        self.url_input.returnPressed.connect(self.on_add_clicked)
         url_row.addWidget(self.url_input, stretch=1)
-        self.download_btn = QPushButton("Download")
-        self.download_btn.clicked.connect(self.on_download_clicked)
-        url_row.addWidget(self.download_btn)
-        download_form.addRow("Video URL:", url_row)
+        add_btn = QPushButton("Add to Queue")
+        add_btn.clicked.connect(self.on_add_clicked)
+        url_row.addWidget(add_btn)
+        import_btn = QPushButton("Load .txt...")
+        import_btn.clicked.connect(self.import_url_list)
+        url_row.addWidget(import_btn)
+        add_form.addRow("URL:", url_row)
 
         out_row = QHBoxLayout()
         out_row.setSpacing(6)
@@ -184,43 +221,50 @@ class MainWindow(QMainWindow):
         browse_btn = QPushButton("Choose...")
         browse_btn.clicked.connect(self.browse_output)
         out_row.addWidget(browse_btn)
-        download_form.addRow("Download to:", out_row)
+        add_form.addRow("Download to:", out_row)
 
-        layout.addWidget(download_group)
+        layout.addWidget(add_group)
 
         # Queue group
-        queue_group = QGroupBox("Queue")
+        queue_group = QGroupBox("Download Queue")
         queue_layout = QVBoxLayout(queue_group)
         queue_layout.setContentsMargins(10, 12, 10, 10)
         queue_layout.setSpacing(6)
 
-        self.queue_list = QListWidget()
-        queue_layout.addWidget(self.queue_list, stretch=1)
+        controls_row = QHBoxLayout()
+        controls_row.setSpacing(6)
+        self.start_btn = QPushButton("Start Downloads")
+        self.start_btn.clicked.connect(self.manager.start)
+        controls_row.addWidget(self.start_btn)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.clicked.connect(self.manager.stop)
+        controls_row.addWidget(self.stop_btn)
+        controls_row.addStretch()
+        self.summary_label = QLabel("")
+        self.summary_label.setEnabled(False)
+        controls_row.addWidget(self.summary_label)
+        queue_layout.addLayout(controls_row)
 
-        clear_row = QHBoxLayout()
-        clear_row.addStretch()
-        clear_btn = QPushButton("Clear Queue")
-        clear_btn.clicked.connect(self.clear_queue)
-        clear_row.addWidget(clear_btn)
-        queue_layout.addLayout(clear_row)
+        self.table = DownloadsTable()
+        self.table.retry_requested.connect(self.manager.retry_item)
+        self.table.cancel_requested.connect(self.manager.cancel_item)
+        self.table.remove_requested.connect(self.manager.remove_item)
+        self.table.open_folder_requested.connect(self._open_item_folder)
+        queue_layout.addWidget(self.table, stretch=1)
+
+        status_row = QHBoxLayout()
+        status_row.setSpacing(6)
+        self.status_label = QLabel("Ready!")
+        status_row.addWidget(self.status_label, stretch=1)
+        clear_finished_btn = QPushButton("Clear Finished")
+        clear_finished_btn.clicked.connect(self.clear_finished)
+        status_row.addWidget(clear_finished_btn)
+        discard_btn = QPushButton("Discard Session")
+        discard_btn.clicked.connect(self.discard_session)
+        status_row.addWidget(discard_btn)
+        queue_layout.addLayout(status_row)
 
         layout.addWidget(queue_group, stretch=1)
-
-        # Progress group
-        progress_group = QGroupBox("Download Progress")
-        progress_layout = QVBoxLayout(progress_group)
-        progress_layout.setContentsMargins(10, 12, 10, 10)
-        progress_layout.setSpacing(4)
-
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        progress_layout.addWidget(self.progress)
-
-        self.status_label = QLabel("Ready!")
-        progress_layout.addWidget(self.status_label)
-
-        layout.addWidget(progress_group)
 
         # Footer row
         footer_row = QHBoxLayout()
@@ -232,6 +276,9 @@ class MainWindow(QMainWindow):
         made_with_label.setFont(footer_font)
         footer_row.addWidget(made_with_label)
         footer_row.addStretch()
+        self.network_label = QLabel("Network: checking\u2026")
+        self.network_label.setToolTip("Checking connectivity\u2026")
+        footer_row.addWidget(self.network_label)
         version_label = QLabel(f"Version {__version__}")
         version_label.setEnabled(False)
         version_label.setFont(footer_font)
@@ -241,11 +288,46 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
 
     # ------------------------------------------------------------------
+    #  Network indicator
+    # ------------------------------------------------------------------
+
+    def _setup_network_monitor(self) -> None:
+        if self.network_monitor is None or not self.config.network_indicator_enabled:
+            self.network_label.hide()
+            return
+        self.network_monitor.status_changed.connect(self._on_network_status)
+        self.network_monitor.start(self.config.network_poll_interval)
+
+    def _on_network_status(self, status) -> None:
+        self.network_label.setText(status.display_text())
+        self.network_label.setToolTip(status.tooltip())
+        color = "#2e7d32" if status.connected else "#c62828"
+        self.network_label.setStyleSheet(f"color: {color};")
+
+    # ------------------------------------------------------------------
     #  Events
     # ------------------------------------------------------------------
 
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self.manager.running:
+            answer = QMessageBox.question(
+                self,
+                "Downloads in progress",
+                "Downloads are still running.\n\nStop them and resume later?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self.manager.stop()
+        self.show_donation_popup()
+        event.accept()
+
     def changeEvent(self, event: QEvent) -> None:
         if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            if self.network_monitor is not None and self.config.network_indicator_enabled:
+                self.network_monitor.check_now()
             if self.config.clipboard_paste_enabled and not self.url_input.text().strip():
                 text = QApplication.clipboard().text().strip()
                 if text.startswith("http"):
@@ -266,7 +348,159 @@ class MainWindow(QMainWindow):
         self.show()
 
     # ------------------------------------------------------------------
-    #  Actions
+    #  Queue actions
+    # ------------------------------------------------------------------
+
+    def on_add_clicked(self) -> None:
+        url = self.url_input.text().strip()
+        if not url:
+            return
+        if not url.startswith("http"):
+            self.set_status("Invalid URL!")
+            return
+        added = self.manager.add_urls([url])
+        if added:
+            self.url_input.clear()
+            self.set_status("Added to queue. Press Start Downloads to begin.")
+            self._on_items_changed()
+
+    def import_url_list(self) -> None:
+        if self.manager.running or (
+            self.manager.session is not None and self.manager.session.remaining() > 0
+        ):
+            answer = QMessageBox.question(
+                self,
+                "Start a new list?",
+                "Importing a new URL list replaces the current one.\n\nContinue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select URL List (.txt)", "", "Text Files (*.txt);;All Files (*)"
+        )
+        if not path:
+            return
+        count, duplicates = self.manager.import_txt(path, self.output_input.text())
+        if count:
+            message = f"Imported <b>{count}</b> URL(s) into the queue."
+            if duplicates:
+                message += (
+                    f"<br><br><b>{duplicates}</b> duplicate(s) were found "
+                    "and removed automatically."
+                )
+            message += "<br><br>Press <b>Start Downloads</b> to begin."
+            QMessageBox.information(self, "URL List Imported", message)
+        else:
+            self.set_status("No valid URLs found in that file.")
+            if duplicates:
+                QMessageBox.information(
+                    self,
+                    "URL List Imported",
+                    f"The file contained only <b>{duplicates}</b> duplicate(s), "
+                    "which were removed.",
+                )
+
+    def resume_last_session(self) -> None:
+        session = self.manager.load_last_session()
+        if session is None:
+            self.set_status("No previous session found.")
+            return
+        self._on_items_changed()
+        if session.remaining() > 0 and not self.manager.running:
+            self.manager.start()
+
+    def _prompt_resume_session(self) -> None:
+        session = self.manager.session
+        if session is None:
+            return
+        remaining = session.remaining()
+        answer = QMessageBox.question(
+            self,
+            "Resume previous session?",
+            f"A previous download session with <b>{remaining}</b> item(s) still pending "
+            "was found.<br><br>Resume where you left off?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.manager.start()
+
+    def clear_finished(self) -> None:
+        self.manager.clear_finished()
+        self.set_status("Cleared finished downloads.")
+
+    def discard_session(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Discard session?",
+            "This removes the current queue. Downloads in progress will be stopped.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.manager.discard_session()
+        if self.manager.session is None:
+            self.manager.new_session(self.config.downloads_dir)
+        self.set_status("Session discarded.")
+
+    # ------------------------------------------------------------------
+    #  Manager-driven UI updates
+    # ------------------------------------------------------------------
+
+    def _session_items(self):
+        return self.manager.session.items if self.manager.session else []
+
+    def _on_item_updated(self, item_id: str) -> None:
+        session = self.manager.session
+        if session is None:
+            return
+        item = session.get_item(item_id)
+        if item is not None:
+            self.table.update_item(item)
+
+    def _on_items_changed(self) -> None:
+        session = self.manager.session
+        items = session.items if session else []
+        self.table.refresh_items(items)
+        self._update_summary()
+        self._update_controls()
+
+    def _on_all_finished(self) -> None:
+        self._update_controls()
+
+    def _update_summary(self) -> None:
+        session = self.manager.session
+        if session is None:
+            self.summary_label.setText("")
+            return
+        counts = session.counts()
+        self.summary_label.setText(
+            f"{counts['completed']}/{counts['total']} done"
+            + (f"  ·  {counts['active']} active" if counts["active"] else "")
+            + (f"  ·  {counts['failed']} failed" if counts["failed"] else "")
+            + (f"  ·  {counts['cancelled']} cancelled" if counts["cancelled"] else "")
+            + (f"  ·  {counts['queued']} queued" if counts["queued"] else "")
+        )
+
+    def _update_controls(self) -> None:
+        running = self.manager.running
+        self.start_btn.setEnabled(not running)
+        self.stop_btn.setEnabled(running)
+        session = self.manager.session
+        remaining = session.remaining() if session is not None else 0
+        self._resume_action.setEnabled(not running and remaining > 0)
+
+    def _open_item_folder(self, item_id: str) -> None:
+        path = self.table.item_dest_paths(item_id)
+        if path:
+            self.open_downloads_directory(path[0])
+
+    # ------------------------------------------------------------------
+    #  Output directory helpers
     # ------------------------------------------------------------------
 
     def browse_output(self) -> None:
@@ -277,9 +511,9 @@ class MainWindow(QMainWindow):
             self.output_input.setText(directory)
             self.config.set_downloads_dir(directory)
 
-    def open_downloads_directory(self) -> None:
-        raw_path = (self.output_input.text() or self.config.downloads_dir).strip()
-        path = Path(raw_path)
+    def open_downloads_directory(self, raw_path: str | None = None) -> None:
+        raw = raw_path or (self.output_input.text() or self.config.downloads_dir).strip()
+        path = Path(raw)
 
         if not path.exists():
             self.set_status("Downloads directory does not exist.")
@@ -294,96 +528,16 @@ class MainWindow(QMainWindow):
         except Exception as ex:
             self.set_status(f"Failed to open directory: {ex}")
 
-    def on_download_clicked(self) -> None:
-        self.download_requested.emit(
-            self.url_input.text().strip(), self.output_input.text().strip()
-        )
-
-    def set_busy(self, busy: bool) -> None:
-        self.download_btn.setEnabled(not busy)
-        self.url_input.setEnabled(not busy)
-        self.output_input.setEnabled(not busy)
-
-    def set_progress(self, value: int) -> None:
-        self.progress.setValue(max(0, min(100, value)))
+    # ------------------------------------------------------------------
+    #  Status helpers
+    # ------------------------------------------------------------------
 
     def set_status(self, text: str) -> None:
         self.status_label.setText(text)
 
-    def show_download_error(self, message: str) -> None:
-        self.set_status("Download failed.")
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Download Error")
-        dlg.setModal(True)
-        dlg.resize(520, 240)
-        layout = QVBoxLayout(dlg)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-        info = QLabel("yt-dlp reported the following error:")
-        layout.addWidget(info)
-        text_box = QTextEdit()
-        text_box.setReadOnly(True)
-        text_box.setPlainText(message)
-        layout.addWidget(text_box)
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        close_btn = QPushButton("Close")
-        close_btn.setDefault(True)
-        close_btn.clicked.connect(dlg.accept)
-        btn_row.addWidget(close_btn)
-        layout.addLayout(btn_row)
-        dlg.exec()
-
-    # ------------------------------------------------------------------
-    #  Queue management
-    # ------------------------------------------------------------------
-
-    def add_to_queue(self, display_text: str) -> int:
-        self.queue_list.addItem(display_text)
-        return self.queue_list.count() - 1
-
-    def mark_queue_item_done(self, row: int) -> None:
-        item = self.queue_list.item(row)
-        if item is None:
-            return
-        text = item.text()
-        if not text.startswith("\u2713 "):
-            item.setText(f"\u2713 {text}")
-        item.setForeground(QColor("#2e7d32"))
-
-    def update_queue_item_progress(self, row: int, done: int, total_count: int) -> None:
-        item = self.queue_list.item(row)
-        if item is None:
-            return
-        text = item.text()
-        text = _re.sub(r"\s*\(\d+/\d+ done\)", "", text)
-        item.setText(f"{text} ({done}/{total_count} done)")
-
-    def clear_queue(self) -> None:
-        self.queue_list.clear()
-        self.set_status("Download queue cleared.")
-
     # ------------------------------------------------------------------
     #  Dialogs & helpers
     # ------------------------------------------------------------------
-
-    def on_download_success(self, message: str) -> None:
-        self.set_progress(100)
-        self.set_status(message)
-        self.url_input.clear()
-
-    def confirm_playlist(self, title: str, count: int) -> bool:
-        result = QMessageBox.question(
-            self,
-            "Playlist Detected!",
-            f"<b>{title}</b><br><br>"
-            f"The provided URL is a playlist with <b>{count} videos</b>.<br>"
-            f"All videos will be downloaded into a subdirectory '{title}'.<br><br>"
-            "Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        return result == QMessageBox.StandardButton.Yes
 
     def _update_format_hint(self) -> None:
         fmt = self.config.preferred_format.upper()
@@ -396,10 +550,26 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             self.output_input.setText(self.config.downloads_dir)
             self._update_format_hint()
+            self._apply_network_preferences()
             self.set_status("Settings saved!")
+            self._update_controls()
+
+    def _apply_network_preferences(self) -> None:
+        if self.network_monitor is None:
+            return
+        if self.config.network_indicator_enabled:
+            self.network_monitor.set_interval(self.config.network_poll_interval)
+            if not self.network_label.isVisible():
+                self.network_label.show()
+            self.network_monitor.check_now()
+        else:
+            self.network_label.hide()
 
     def open_ytdlp_manager(self) -> None:
         YtdlpDialog(self).exec()
+
+    def open_ffmpeg_manager(self) -> None:
+        FfmpegDialog(self).exec()
 
     def visit_github(self) -> None:
         webbrowser.open("https://github.com/RubberDuck01/rd-cliprip-python")

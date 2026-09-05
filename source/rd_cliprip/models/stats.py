@@ -57,9 +57,11 @@ class Stats:
         self.data["total_sessions"] = int(self.data.get("total_sessions", 0)) + 1
         self.save()
 
-    def add_successful_download(self, size_mb: float, duration_sec: int) -> None:
+    def add_successful_download(
+        self, size_mb: float, duration_sec: int, file_count: int = 1
+    ) -> None:
         self.data["total_files_downloaded"] = (
-            int(self.data.get("total_files_downloaded", 0)) + 1
+            int(self.data.get("total_files_downloaded", 0)) + max(1, file_count)
         )
         self.data["total_downloads_size"] = (
             float(self.data.get("total_downloads_size", 0.0)) + max(0.0, size_mb)

@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
 )
 
@@ -20,7 +21,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.config = config
         self.setWindowTitle("RD ClipRip - Settings")
-        self.resize(520, 320)
+        self.resize(560, 660)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
@@ -52,6 +53,22 @@ class SettingsDialog(QDialog):
         self.auto_update_check = QCheckBox("Auto-update yt-dlp on launch")
         self.auto_update_check.setChecked(self.config.auto_update)
         proc_form.addRow(self.auto_update_check)
+
+        self.concurrent_spin = QSpinBox()
+        self.concurrent_spin.setRange(1, 8)
+        self.concurrent_spin.setValue(self.config.max_concurrent_downloads)
+        concurrent_hint = QLabel("(used only for multi-URL lists)")
+        concurrent_hint.setEnabled(False)
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        row.addWidget(self.concurrent_spin)
+        row.addWidget(concurrent_hint)
+        row.addStretch()
+        proc_form.addRow("Simultaneous downloads:", row)
+
+        self.remux_check = QCheckBox("Remux completed videos to MP4 (needs FFmpeg)")
+        self.remux_check.setChecked(self.config.remux_to_mp4)
+        proc_form.addRow(self.remux_check)
 
         self.format_combo = QComboBox()
         self.format_combo.addItems(["MP4", "MKV", "WebM"])
@@ -98,6 +115,24 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(cookies_group)
 
+        # Network group
+        network_group = QGroupBox("Network")
+        network_form = QFormLayout(network_group)
+        network_form.setContentsMargins(10, 12, 10, 10)
+        network_form.setSpacing(6)
+
+        self.network_indicator_check = QCheckBox("Show network status in the footer")
+        self.network_indicator_check.setChecked(self.config.network_indicator_enabled)
+        network_form.addRow(self.network_indicator_check)
+
+        self.network_interval_spin = QSpinBox()
+        self.network_interval_spin.setRange(5, 600)
+        self.network_interval_spin.setSuffix(" s")
+        self.network_interval_spin.setValue(self.config.network_poll_interval)
+        network_form.addRow("Refresh interval:", self.network_interval_spin)
+
+        layout.addWidget(network_group)
+
         layout.addStretch()
 
         # Buttons
@@ -132,10 +167,14 @@ class SettingsDialog(QDialog):
     def _save_and_close(self) -> None:
         self.config.set_downloads_dir(self.dir_input.text())
         self.config.set_auto_update(self.auto_update_check.isChecked())
+        self.config.set_max_concurrent_downloads(self.concurrent_spin.value())
+        self.config.set_remux_to_mp4(self.remux_check.isChecked())
         self.config.set_preferred_format(self.format_combo.currentText().lower())
         res_text = self.resolution_combo.currentText().split()[0].lower().replace("p", "")
         self.config.set_preferred_resolution(f"{res_text}p")
         self.config.set_embed_subs(self.embed_subs_check.isChecked())
         self.config.set_cookies_enabled(self.cookies_enabled_check.isChecked())
         self.config.set_cookies_path(self.cookies_path_input.text())
+        self.config.set_network_indicator_enabled(self.network_indicator_check.isChecked())
+        self.config.set_network_poll_interval(self.network_interval_spin.value())
         self.accept()

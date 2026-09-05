@@ -47,6 +47,10 @@ class Config:
                 "cookies_enabled": False,
                 "cookies_path": "",
                 "clipboard_paste_enabled": True,
+                "max_concurrent_downloads": 1,
+                "remux_to_mp4": True,
+                "network_indicator_enabled": True,
+                "network_poll_interval": 15,
             },
             "other": {
                 "i_have_donated": False,
@@ -87,6 +91,28 @@ class Config:
         return bool(self.data["settings"].get("clipboard_paste_enabled", True))
 
     @property
+    def max_concurrent_downloads(self) -> int:
+        try:
+            return max(1, min(8, int(self.data["settings"].get("max_concurrent_downloads", 1))))
+        except (TypeError, ValueError):
+            return 1
+
+    @property
+    def remux_to_mp4(self) -> bool:
+        return bool(self.data["settings"].get("remux_to_mp4", True))
+
+    @property
+    def network_indicator_enabled(self) -> bool:
+        return bool(self.data["settings"].get("network_indicator_enabled", True))
+
+    @property
+    def network_poll_interval(self) -> int:
+        try:
+            return max(5, min(600, int(self.data["settings"].get("network_poll_interval", 15))))
+        except (TypeError, ValueError):
+            return 15
+
+    @property
     def i_have_donated(self) -> bool:
         return self.data["other"]["i_have_donated"]
 
@@ -121,6 +147,22 @@ class Config:
 
     def set_clipboard_paste_enabled(self, value: bool) -> None:
         self.data["settings"]["clipboard_paste_enabled"] = value
+        self.save()
+
+    def set_max_concurrent_downloads(self, value: int) -> None:
+        self.data["settings"]["max_concurrent_downloads"] = max(1, min(8, int(value)))
+        self.save()
+
+    def set_remux_to_mp4(self, value: bool) -> None:
+        self.data["settings"]["remux_to_mp4"] = bool(value)
+        self.save()
+
+    def set_network_indicator_enabled(self, value: bool) -> None:
+        self.data["settings"]["network_indicator_enabled"] = bool(value)
+        self.save()
+
+    def set_network_poll_interval(self, seconds: int) -> None:
+        self.data["settings"]["network_poll_interval"] = max(5, min(600, int(seconds)))
         self.save()
 
     def set_i_have_donated(self, value: bool) -> None:
