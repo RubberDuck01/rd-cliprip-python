@@ -1,16 +1,20 @@
 from datetime import datetime
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from rd_cliprip.controllers.download_manager import DownloadManager
@@ -18,7 +22,12 @@ from rd_cliprip.controllers.download_manager import DownloadManager
 _COL_LABEL = 0
 _COL_OUTPUT = 1
 _COL_PROGRESS = 2
-_COL_CREATED = 3
+_COL_STATUS = 3
+
+_COLOR_ACTIVE = QColor("#1565c0")
+_COLOR_REMAINING = QColor("#b26a00")
+_COLOR_DONE = QColor("#2e7d32")
+_COLOR_EMPTY = QColor("#9e9e9e")
 
 
 class SessionManagerDialog(QDialog):
@@ -28,7 +37,7 @@ class SessionManagerDialog(QDialog):
         self.on_new_import = on_new_import
         self.setWindowTitle("Session Manager")
         self.setModal(True)
-        self.resize(720, 420)
+        self.resize(760, 440)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -45,20 +54,29 @@ class SessionManagerDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(
-            ["Session", "Download Folder", "Progress", "Created"]
+            ["Session", "Download Folder", "Progress", "Status"]
         )
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(28)
+        self.table.verticalHeader().setDefaultSectionSize(32)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(_COL_LABEL, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(_COL_OUTPUT, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(_COL_PROGRESS, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(_COL_CREATED, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        header.setSectionResizeMode(_COL_PROGRESS, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(_COL_STATUS, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(_COL_PROGRESS, 170)
+        self.table.setColumnWidth(_COL_STATUS, 150)
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setWordWrap(False)
         self.table.doubleClicked.connect(self._open_selected)
         layout.addWidget(self.table, stretch=1)
+
+        self.empty_label = QLabel("No sessions yet. Import a URL list to get started.")
+        self.empty_label.setEnabled(False)
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.empty_label)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
@@ -92,44 +110,94 @@ class SessionManagerDialog(QDialog):
         for meta in sessions:
             row = self.table.rowCount()
             self.table.insertRow(row)
+            self._append_row(row, meta, meta.get("id") == active_id)
 
-            label = meta.get("label") or "Untitled"
-            if meta.get("id") == active_id:
-                label += "   (current)"
-            label_item = QTableWidgetItem(label)
-            label_item.setToolTip(meta.get("source_file") or label)
-            self.table.setItem(row, _COL_LABEL, label_item)
+        has_sessions = bool(sessions)
+        self.table.setVisible(has_sessions)
+        self.empty_label.setVisible(not has_sessions)
 
-            self.table.setItem(
-                row, _COL_OUTPUT, QTableWidgetItem(meta.get("output_dir", ""))
-            )
-            self.table.setItem(
-                row,
-                _COL_PROGRESS,
-                QTableWidgetItem(
-                    f"{meta.get('completed', 0)}/{meta.get('total', 0)} done"
-                    + (
-                        f"  ({meta.get('remaining', 0)} left)"
-                        if meta.get("remaining")
-                        else ""
-                    )
-                ),
-            )
-            created = meta.get("created_at", "")
-            try:
-                created = datetime.fromisoformat(created).strftime("%Y-%m-%d %H:%M")
-            except Exception:
-                pass
-            self.table.setItem(row, _COL_CREATED, QTableWidgetItem(created))
+    def _append_row(self, row: int, meta: dict, is_active: bool) -> None:
+        label = meta.get("label") or "Untitled"
+        source_file = meta.get("source_file") or ""
+        created = meta.get("created_at", "")
+        try:
+            created = datetime.fromisoformat(created).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+
+        # Session name
+        label_item = QTableWidgetItem(label)
+        label_item.setToolTip(
+            source_file or label
+            + (f"\nCreated: {created}" if created else "")
+        )
+        if is_active:
+            font = QFont(label_item.font())
+            font.setBold(True)
+            label_item.setFont(font)
+            label_item.setForeground(_COLOR_ACTIVE)
+        self.table.setItem(row, _COL_LABEL, label_item)
+
+        # Download folder
+        folder_item = QTableWidgetItem(meta.get("output_dir", ""))
+        folder_item.setToolTip(
+            meta.get("output_dir", "")
+            + (f"\nSource: {source_file}" if source_file else "")
+        )
+        self.table.setItem(row, _COL_OUTPUT, folder_item)
+
+        # Progress bar (same look as the download queue)
+        total = meta.get("total", 0)
+        done = meta.get("completed", 0)
+        remaining = meta.get("remaining", 0)
+
+        progress = QProgressBar()
+        progress.setTextVisible(True)
+        if total > 0:
+            progress.setRange(0, total)
+            progress.setValue(min(done, total))
+            progress.setFormat(f"{done}/{total}")
+            progress.setToolTip(f"{done} of {total} done")
+        else:
+            progress.setRange(0, 1)
+            progress.setValue(0)
+            progress.setFormat("\u2014")
+
+        host = QWidget()
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(4, 5, 4, 5)
+        host_layout.addWidget(progress)
+        self.table.setCellWidget(row, _COL_PROGRESS, host)
+
+        # Status column
+        if total == 0:
+            status = "Empty"
+            color = _COLOR_EMPTY
+        elif remaining == 0:
+            status = "Complete"
+            color = _COLOR_DONE
+        elif is_active:
+            status = f"{remaining} left  \u00b7 active"
+            color = _COLOR_ACTIVE
+        else:
+            status = f"{remaining} left"
+            color = _COLOR_REMAINING
+        status_item = QTableWidgetItem(status)
+        status_item.setForeground(color)
+        self.table.setItem(row, _COL_STATUS, status_item)
+
+    # ------------------------------------------------------------------
+    #  Selection helpers
+    # ------------------------------------------------------------------
 
     def _selected_id(self) -> str | None:
         row = self.table.currentRow()
         if row < 0:
             return None
-        meta = self.manager.stored_sessions()
-        if row >= len(meta):
+        sessions = self.manager.stored_sessions()
+        if row >= len(sessions):
             return None
-        return meta[row].get("id")
+        return sessions[row].get("id")
 
     # ------------------------------------------------------------------
     #  Actions
