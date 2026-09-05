@@ -258,6 +258,7 @@ class MainWindow(QMainWindow):
         self.table.cancel_requested.connect(self.manager.cancel_item)
         self.table.remove_requested.connect(self.manager.remove_item)
         self.table.open_folder_requested.connect(self._open_item_folder)
+        self.table.open_file_requested.connect(self._open_item_file)
         queue_layout.addWidget(self.table, stretch=1)
 
         status_row = QHBoxLayout()
@@ -533,6 +534,19 @@ class MainWindow(QMainWindow):
         path = self.table.item_dest_paths(item_id)
         if path:
             self.open_downloads_directory(path[0])
+
+    def _open_item_file(self, item_id: str) -> None:
+        paths = self.table.item_dest_paths(item_id)
+        if not paths:
+            return
+        file_path = Path(paths[0])
+        if not file_path.exists():
+            self.set_status("The downloaded file no longer exists.")
+            return
+        try:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(file_path)))
+        except Exception as ex:
+            self.set_status(f"Failed to open file: {ex}")
 
     # ------------------------------------------------------------------
     #  Output directory helpers

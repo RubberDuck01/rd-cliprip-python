@@ -2,6 +2,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QHeaderView,
     QMenu,
     QProgressBar,
@@ -44,12 +45,14 @@ class DownloadsTable(QTableWidget):
     cancel_requested = pyqtSignal(str)
     remove_requested = pyqtSignal(str)
     open_folder_requested = pyqtSignal(str)
+    open_file_requested = pyqtSignal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._row_for_id: dict[str, int] = {}
         self._state_for_id: dict[str, str] = {}
         self._dest_for_id: dict[str, list[str]] = {}
+        self._url_for_id: dict[str, str] = {}
         self._progress_for_id: dict[str, QProgressBar] = {}
 
         self.setColumnCount(7)
@@ -80,6 +83,7 @@ class DownloadsTable(QTableWidget):
         self.setAlternatingRowColors(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+        self.cellDoubleClicked.connect(self._on_double_clicked)
 
     # ------------------------------------------------------------------
     #  Rendering
@@ -90,6 +94,7 @@ class DownloadsTable(QTableWidget):
         self._row_for_id.clear()
         self._state_for_id.clear()
         self._dest_for_id.clear()
+        self._url_for_id.clear()
         self._progress_for_id.clear()
         for index, item in enumerate(items):
             self._append_row(index, item)
@@ -100,6 +105,7 @@ class DownloadsTable(QTableWidget):
         self._row_for_id[item.id] = row
         self._state_for_id[item.id] = item.state
         self._dest_for_id[item.id] = item.dest_paths
+        self._url_for_id[item.id] = item.url
 
         num_item = QTableWidgetItem(str(display_index + 1))
         num_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -192,6 +198,7 @@ class DownloadsTable(QTableWidget):
         row = self._row_for_id.pop(item_id, None)
         self._state_for_id.pop(item_id, None)
         self._dest_for_id.pop(item_id, None)
+        self._url_for_id.pop(item_id, None)
         self._progress_for_id.pop(item_id, None)
         if row is not None:
             self.removeRow(row)
@@ -269,6 +276,21 @@ class DownloadsTable(QTableWidget):
     def item_dest_paths(self, item_id: str) -> list[str]:
         return self._dest_for_id.get(item_id, [])
 
+    def item_url(self, item_id: str) -> str:
+        return self._url_for_id.get(item_id, "")
+
+    def _copy_url(self, item_id: str) -> None:
+        url = self.item_url(item_id)
+        if url:
+            QApplication.clipboard().setText(url)
+
+    def _on_double_clicked(self, row: int, _col: int) -> None:
+        item_id = self.item_id_at(row)
+        if item_id is None:
+            return
+        if self.item_state(item_id) == STATE_COMPLETED and self.item_dest_paths(item_id):
+            self.open_file_requested.emit(item_id)
+
     def _show_context_menu(self, pos) -> None:
         row = self.rowAt(pos.y())
         if row < 0:
@@ -277,24 +299,33 @@ class DownloadsTable(QTableWidget):
         if item_id is None:
             return
         state = self.item_state(item_id)
+        has_file = bool(self.item_dest_paths(item_id))
 
         menu = QMenu(self)
         retry_action = menu.addAction("Retry")
         cancel_action = menu.addAction("Cancel")
-        open_action = menu.addAction("Open Folder")
+        menu.addSeparator()
+        copy_action = menu.addAction("Copy URL")
+        open_file_action = menu.addAction("Open File")
+        open_folder_action = menu.addAction("Open Folder")
         menu.addSeparator()
         remove_action = menu.addAction("Remove from List")
 
         retry_action.setEnabled(state in (STATE_FAILED, STATE_CANCELLED))
         cancel_action.setEnabled(state == STATE_ACTIVE)
-        open_action.setEnabled(bool(self.item_dest_paths(item_id)))
+        open_file_action.setEnabled(has_file)
+        open_folder_action.setEnabled(has_file)
 
         chosen = menu.exec(self.viewport().mapToGlobal(pos))
         if chosen is retry_action:
             self.retry_requested.emit(item_id)
         elif chosen is cancel_action:
             self.cancel_requested.emit(item_id)
-        elif chosen is open_action:
+        elif chosen is copy_action:
+            self._copy_url(item_id)
+        elif chosen is open_file_action:
+            self.open_file_requested.emit(item_id)
+        elif chosen is open_folder_action:
             self.open_folder_requested.emit(item_id)
         elif chosen is remove_action:
             self.remove_requested.emit(item_id)
