@@ -100,7 +100,7 @@ class SessionManagerDialog(QDialog):
         super().__init__(parent)
         self.manager = manager
         self.on_new_import = on_new_import
-        self.setWindowTitle("Session Manager")
+        self.setWindowTitle("RD ClipRip - Session Manager")
         self.setModal(True)
         self.resize(760, 440)
 
@@ -110,7 +110,7 @@ class SessionManagerDialog(QDialog):
 
         info = QLabel(
             "Each URL list you import becomes its own session with its own "
-            "download folder. Pick one to make it active, or create an empty "
+            "download directory. Pick one to make it active, or create an empty "
             "session to build up by hand."
         )
         info.setWordWrap(True)

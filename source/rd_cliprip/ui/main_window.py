@@ -59,7 +59,7 @@ class MainWindow(QMainWindow):
         self.manager = manager
         self.network_monitor = network_monitor
         self.tray: QSystemTrayIcon | None = None
-        self.setWindowTitle("Rubber Duck's ClipRip")
+        self.setWindowTitle(f"Rubber Duck's ClipRip v{__version__}")
         self.resize(940, 720)
 
         self._build_menu()

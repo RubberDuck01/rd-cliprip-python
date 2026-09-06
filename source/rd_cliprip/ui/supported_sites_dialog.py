@@ -19,7 +19,7 @@ from rd_cliprip.utils import format_dt_short
 class SupportedSitesDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Supported Websites")
+        self.setWindowTitle("RD ClipRip - yt-dlp Supported Websites")
         self.setModal(True)
         self.resize(560, 620)
 
@@ -53,7 +53,7 @@ class SupportedSitesDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
         btn_row.addStretch()
-        self.fetch_btn = QPushButton("Fetch Again...")
+        self.fetch_btn = QPushButton("Update")
         self.fetch_btn.clicked.connect(self._start_fetch)
         btn_row.addWidget(self.fetch_btn)
         close_btn = QPushButton("Close")
@@ -85,9 +85,9 @@ class SupportedSitesDialog(QDialog):
         count = len(self._sites)
         if self._fetched_at:
             when = format_dt_short(self._fetched_at)
-            self.info_label.setText(f"{count} supported websites  \u2022  list fetched {when}")
+            self.info_label.setText(f"Supported websites: {count}  \u2022  Last updated at: {when}")
         elif count:
-            self.info_label.setText(f"{count} supported websites")
+            self.info_label.setText(f"Supported websites: {count}")
         else:
             self.info_label.setText("The supported-websites list has not been downloaded yet.")
 
