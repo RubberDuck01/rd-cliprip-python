@@ -58,6 +58,7 @@ class DownloadManager(QObject):
         self._running = False
         self._stop = threading.Event()
         self._jobs: queue.Queue[str | None] = queue.Queue()
+        self._retry_jobs: queue.Queue[str | None] = queue.Queue()
         self._results: queue.Queue[dict[str, Any]] = queue.Queue()
         self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
@@ -288,6 +289,7 @@ class DownloadManager(QObject):
         # Make sure any straggler threads from a previous run are gone.
         self._stop.set()
         self._join_threads()
+        self._drain_jobs()
         self._drain_results()
         self._stop.clear()
         self._kill_cause.clear()
@@ -343,6 +345,7 @@ class DownloadManager(QObject):
             self.session.save()
 
         self._join_threads()
+        self._drain_jobs()
         self._drain_results()
 
         self._running = False
@@ -401,7 +404,8 @@ class DownloadManager(QObject):
         item.touch()
         self.session.save()
         if self._running:
-            self._jobs.put(item.id)
+            # Manual retries are prioritised like auto-retries.
+            self._retry_jobs.put(item.id)
         self.item_updated.emit(item_id)
 
     def remove_item(self, item_id: str) -> None:
@@ -464,6 +468,14 @@ class DownloadManager(QObject):
             thread.join(timeout=1.0)
         self._threads = []
 
+    def _drain_jobs(self) -> None:
+        for job_queue in (self._jobs, self._retry_jobs):
+            while True:
+                try:
+                    job_queue.get_nowait()
+                except queue.Empty:
+                    break
+
     def _drain_results(self) -> None:
         while True:
             try:
@@ -515,10 +527,14 @@ class DownloadManager(QObject):
 
     def _worker_loop(self) -> None:
         while not self._stop.is_set():
+            # Prioritise automatic retries over new items.
             try:
-                item_id = self._jobs.get(timeout=0.25)
+                item_id = self._retry_jobs.get_nowait()
             except queue.Empty:
-                continue
+                try:
+                    item_id = self._jobs.get(timeout=0.25)
+                except queue.Empty:
+                    continue
             if item_id is None:
                 break
 
@@ -669,13 +685,14 @@ class DownloadManager(QObject):
             self.session.mark_failed(item, message)
             return
 
-        # Transient error: keep it queued so an idle agent picks it up again.
+        # Transient error: keep it queued so an idle agent picks it up again
+        # (retries are prioritised ahead of new items).
         item.state = STATE_QUEUED
         item.progress = 0
         item.error = ""
         item.touch()
         if self._running:
-            self._jobs.put(item.id)
+            self._retry_jobs.put(item.id)
 
     def _try_finish_run(self) -> None:
         """End the run once every queued/in-flight item has resolved."""
@@ -684,7 +701,7 @@ class DownloadManager(QObject):
         with self._lock:
             busy = self._busy
             has_procs = bool(self._procs)
-        if busy or has_procs or not self._jobs.empty() or not self._results.empty():
+        if busy or has_procs or not self._jobs.empty() or not self._retry_jobs.empty() or not self._results.empty():
             return
 
         self._running = False

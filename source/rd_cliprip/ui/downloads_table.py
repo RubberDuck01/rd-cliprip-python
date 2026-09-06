@@ -398,6 +398,8 @@ class DownloadsTable(QTableWidget):
             return f"Failed \u2014 {short[:60]}"
         if item.state == STATE_CANCELLED:
             return "Cancelled"
+        if item.attempts > 0:
+            return "Queued (retry)"
         return "Queued"
 
     @staticmethod
