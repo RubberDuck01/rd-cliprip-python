@@ -22,7 +22,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.config = config
         self.setWindowTitle("RD ClipRip - Settings")
-        self.resize(600, 780)
+        self.resize(620, 860)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
@@ -114,6 +114,23 @@ class SettingsDialog(QDialog):
         self.speed_spin.setSpecialValueText("Unlimited")
         self.speed_spin.setValue(self.config.max_download_speed_mbps)
         proc_form.addRow("Max download speed (per agent):", self.speed_spin)
+
+        self.fragments_spin = QSpinBox()
+        self.fragments_spin.setRange(0, 32)
+        self.fragments_spin.setValue(self.config.concurrent_fragments)
+        self.fragments_spin.setSpecialValueText("Default")
+        proc_form.addRow("Concurrent HLS fragments:", self.fragments_spin)
+        fragments_desc = QLabel(
+            "Downloads HLS/DASH video chunks in parallel for faster downloads. "
+            "Only affects fragmented (m3u8/DASH) streams; quality, audio and "
+            "thumbnails are unchanged."
+        )
+        fragments_desc.setWordWrap(True)
+        fragments_desc.setEnabled(False)
+        fragments_desc_font = fragments_desc.font()
+        fragments_desc_font.setPointSize(fragments_desc_font.pointSize() - 1)
+        fragments_desc.setFont(fragments_desc_font)
+        proc_form.addRow(fragments_desc)
 
         self.format_combo = QComboBox()
         self.format_combo.addItems(["MP4", "MKV", "WebM"])
@@ -226,6 +243,7 @@ class SettingsDialog(QDialog):
         self.config.set_remux_to_mp4(self.remux_check.isChecked())
         self.config.set_auto_retry(self.retry_spin.value())
         self.config.set_max_download_speed_mbps(self.speed_spin.value())
+        self.config.set_concurrent_fragments(self.fragments_spin.value())
         self.config.set_preferred_format(self.format_combo.currentText().lower())
         res_text = self.resolution_combo.currentText().split()[0].lower().replace("p", "")
         self.config.set_preferred_resolution(f"{res_text}p")

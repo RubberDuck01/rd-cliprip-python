@@ -51,6 +51,7 @@ class Config:
                 "remux_to_mp4": False,
                 "auto_retry": 1,
                 "max_download_speed_mbps": 0.0,
+                "concurrent_fragments": 8,
                 "show_banner": True,
                 "network_indicator_enabled": True,
                 "network_poll_interval": 15,
@@ -119,6 +120,13 @@ class Config:
             return 0.0
 
     @property
+    def concurrent_fragments(self) -> int:
+        try:
+            return max(0, min(32, int(self.data["settings"].get("concurrent_fragments", 8))))
+        except (TypeError, ValueError):
+            return 8
+
+    @property
     def network_indicator_enabled(self) -> bool:
         return bool(self.data["settings"].get("network_indicator_enabled", True))
 
@@ -184,6 +192,10 @@ class Config:
 
     def set_max_download_speed_mbps(self, value: float) -> None:
         self.data["settings"]["max_download_speed_mbps"] = max(0.0, float(value))
+        self.save()
+
+    def set_concurrent_fragments(self, value: int) -> None:
+        self.data["settings"]["concurrent_fragments"] = max(0, min(32, int(value)))
         self.save()
 
     def set_network_indicator_enabled(self, value: bool) -> None:

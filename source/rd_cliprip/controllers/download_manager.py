@@ -563,6 +563,7 @@ class DownloadManager(QObject):
                     ffmpeg_location=str(Path(ffmpeg).parent) if ffmpeg else None,
                     ffmpeg_exe=ffmpeg,
                     rate_limit_mbps=self.config.max_download_speed_mbps,
+                    concurrent_fragments=self.config.concurrent_fragments,
                     on_progress=self._on_progress,
                     register_proc=self._register_proc,
                     unregister_proc=self._unregister_proc,

@@ -59,6 +59,12 @@ class BuildArgsTests(unittest.TestCase):
         args = self._args(rate_limit_mbps=2.5)
         self.assertEqual(args[args.index("--limit-rate") + 1], "2.50M")
 
+    def test_concurrent_fragments_flag(self):
+        args = self._args(concurrent_fragments=8)
+        self.assertEqual(args[args.index("--concurrent-fragments") + 1], "8")
+        self.assertNotIn("--concurrent-fragments", self._args(concurrent_fragments=0))
+        self.assertNotIn("--concurrent-fragments", self._args(concurrent_fragments=1))
+
     def test_ffmpeg_location_flag(self):
         args = self._args(ffmpeg_location=r"C:\tools")
         self.assertEqual(args[args.index("--ffmpeg-location") + 1], r"C:\tools")

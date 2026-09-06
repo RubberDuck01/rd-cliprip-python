@@ -387,12 +387,14 @@ def build_ytdlp_args(
     remux_to_mp4: bool = False,
     no_playlist: bool = True,
     rate_limit_mbps: float = 0.0,
+    concurrent_fragments: int = 0,
 ) -> list[str]:
     """Build the yt-dlp argument list for video downloads.
 
     ``output_template`` may be an absolute path template (e.g. a staging dir)
     or None to fall back to ``<output_dir>/%(title).200s.%(ext)s``.
     ``rate_limit_mbps`` caps each download's speed (0 = unlimited).
+    ``concurrent_fragments`` parallelises HLS/DASH fragment downloads (>1).
     """
     ytdlp = find_ytdlp_exe()
     if not ytdlp:
@@ -458,6 +460,11 @@ def build_ytdlp_args(
     if rate_limit_mbps and rate_limit_mbps > 0:
         args.insert(2, "--limit-rate")
         args.insert(3, f"{rate_limit_mbps:.2f}M")
+
+    # Parallel HLS/DASH fragment downloads
+    if concurrent_fragments and concurrent_fragments > 1:
+        args.insert(2, "--concurrent-fragments")
+        args.insert(3, str(concurrent_fragments))
 
     # Remux final container to MP4 (needs ffmpeg)
     if remux_to_mp4:
@@ -565,6 +572,7 @@ def run_single_item(
     ffmpeg_location: str | None = None,
     ffmpeg_exe: str | None = None,
     rate_limit_mbps: float = 0.0,
+    concurrent_fragments: int = 0,
     on_progress: Any = None,
     register_proc: Any = None,
     unregister_proc: Any = None,
@@ -604,6 +612,7 @@ def run_single_item(
             remux_to_mp4=remux_to_mp4,
             no_playlist=not allow_playlist,
             rate_limit_mbps=rate_limit_mbps,
+            concurrent_fragments=concurrent_fragments,
         )
     except Exception as ex:
         return {
