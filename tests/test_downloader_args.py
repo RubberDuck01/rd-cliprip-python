@@ -69,6 +69,25 @@ class BuildArgsTests(unittest.TestCase):
         self.assertNotIn("--concurrent-fragments", self._args(concurrent_fragments=0))
         self.assertNotIn("--concurrent-fragments", self._args(concurrent_fragments=1))
 
+    def test_native_downloader_by_default(self):
+        args = self._args()
+        self.assertNotIn("--downloader", args)
+
+    def test_aria2c_downloader(self):
+        with patch.object(
+            downloader, "find_aria2c_exe", return_value=r"C:\tools\aria2c.exe"
+        ):
+            args = self._args(downloader="aria2c", aria2c_connections=8)
+        self.assertEqual(args[args.index("--downloader") + 1], r"C:\tools\aria2c.exe")
+        args_str = " ".join(args)
+        self.assertIn("-x 8", args_str)
+        self.assertIn("--downloader-args", args_str)
+
+    def test_aria2c_falls_back_when_not_installed(self):
+        with patch.object(downloader, "find_aria2c_exe", return_value=None):
+            args = self._args(downloader="aria2c")
+        self.assertNotIn("--downloader", args)
+
     def test_ffmpeg_location_flag(self):
         args = self._args(ffmpeg_location=r"C:\tools")
         self.assertEqual(args[args.index("--ffmpeg-location") + 1], r"C:\tools")

@@ -35,6 +35,7 @@ from rd_cliprip.models.stats import Stats
 from rd_cliprip.resources import get_resources_dir
 from rd_cliprip.services.network import NetworkMonitor
 from rd_cliprip.ui.about_dialog import AboutDialog
+from rd_cliprip.ui.aria2c_dialog import Aria2cDialog
 from rd_cliprip.ui.donation_dialog import DonationDialog
 from rd_cliprip.ui.downloads_table import DownloadsTable
 from rd_cliprip.ui.ffmpeg_dialog import FfmpegDialog
@@ -158,6 +159,9 @@ class MainWindow(QMainWindow):
         )
         tools_menu.addAction(
             QAction("&FFmpeg Settings", self, triggered=self.open_ffmpeg_manager)
+        )
+        tools_menu.addAction(
+            QAction("&aria2c Settings", self, triggered=self.open_aria2c_manager)
         )
 
         # Help
@@ -730,6 +734,9 @@ class MainWindow(QMainWindow):
 
     def open_ffmpeg_manager(self) -> None:
         FfmpegDialog(self).exec()
+
+    def open_aria2c_manager(self) -> None:
+        Aria2cDialog(self).exec()
 
     def visit_github(self) -> None:
         webbrowser.open("https://github.com/RubberDuck01/rd-cliprip-python")

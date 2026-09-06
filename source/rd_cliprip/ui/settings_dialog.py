@@ -132,6 +132,32 @@ class SettingsDialog(QDialog):
         fragments_desc.setFont(fragments_desc_font)
         proc_form.addRow(fragments_desc)
 
+        self.downloader_combo = QComboBox()
+        self.downloader_combo.addItems(["Native (yt-dlp)", "aria2c"])
+        self.downloader_combo.setCurrentIndex(
+            1 if self.config.downloader == "aria2c" else 0
+        )
+        self.downloader_combo.currentIndexChanged.connect(self._on_downloader_changed)
+        proc_form.addRow("Downloader:", self.downloader_combo)
+
+        self.aria2c_connections_spin = QSpinBox()
+        self.aria2c_connections_spin.setRange(1, 32)
+        self.aria2c_connections_spin.setValue(self.config.aria2c_connections)
+        proc_form.addRow("aria2c connections per file:", self.aria2c_connections_spin)
+
+        downloader_desc = QLabel(
+            "aria2c can speed up direct MP4 downloads with parallel connections; "
+            "install it via Tools > aria2c Settings first. HLS/DASH streams always "
+            "use fragment downloads."
+        )
+        downloader_desc.setWordWrap(True)
+        downloader_desc.setEnabled(False)
+        downloader_desc_font = downloader_desc.font()
+        downloader_desc_font.setPointSize(downloader_desc_font.pointSize() - 1)
+        downloader_desc.setFont(downloader_desc_font)
+        proc_form.addRow(downloader_desc)
+        self._on_downloader_changed()
+
         self.format_combo = QComboBox()
         self.format_combo.addItems(["MP4", "MKV", "WebM"])
         fmt = self.config.preferred_format.lower()
@@ -236,6 +262,10 @@ class SettingsDialog(QDialog):
         for w in self._cookies_row_widgets:
             w.setEnabled(enabled)
 
+    def _on_downloader_changed(self, *_args) -> None:
+        is_aria2c = self.downloader_combo.currentIndex() == 1
+        self.aria2c_connections_spin.setEnabled(is_aria2c)
+
     def _save_and_close(self) -> None:
         self.config.set_downloads_dir(self.dir_input.text())
         self.config.set_auto_update(self.auto_update_check.isChecked())
@@ -244,6 +274,10 @@ class SettingsDialog(QDialog):
         self.config.set_auto_retry(self.retry_spin.value())
         self.config.set_max_download_speed_mbps(self.speed_spin.value())
         self.config.set_concurrent_fragments(self.fragments_spin.value())
+        self.config.set_downloader(
+            "aria2c" if self.downloader_combo.currentIndex() == 1 else "native"
+        )
+        self.config.set_aria2c_connections(self.aria2c_connections_spin.value())
         self.config.set_preferred_format(self.format_combo.currentText().lower())
         res_text = self.resolution_combo.currentText().split()[0].lower().replace("p", "")
         self.config.set_preferred_resolution(f"{res_text}p")

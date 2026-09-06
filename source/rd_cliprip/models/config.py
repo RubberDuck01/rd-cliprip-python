@@ -52,6 +52,8 @@ class Config:
                 "auto_retry": 1,
                 "max_download_speed_mbps": 0.0,
                 "concurrent_fragments": 8,
+                "downloader": "native",
+                "aria2c_connections": 8,
                 "show_banner": True,
                 "network_indicator_enabled": True,
                 "network_poll_interval": 15,
@@ -127,6 +129,18 @@ class Config:
             return 8
 
     @property
+    def downloader(self) -> str:
+        value = str(self.data["settings"].get("downloader", "native")).lower()
+        return value if value in ("native", "aria2c") else "native"
+
+    @property
+    def aria2c_connections(self) -> int:
+        try:
+            return max(1, min(32, int(self.data["settings"].get("aria2c_connections", 8))))
+        except (TypeError, ValueError):
+            return 8
+
+    @property
     def network_indicator_enabled(self) -> bool:
         return bool(self.data["settings"].get("network_indicator_enabled", True))
 
@@ -196,6 +210,15 @@ class Config:
 
     def set_concurrent_fragments(self, value: int) -> None:
         self.data["settings"]["concurrent_fragments"] = max(0, min(32, int(value)))
+        self.save()
+
+    def set_downloader(self, value: str) -> None:
+        value = str(value).lower()
+        self.data["settings"]["downloader"] = value if value in ("native", "aria2c") else "native"
+        self.save()
+
+    def set_aria2c_connections(self, value: int) -> None:
+        self.data["settings"]["aria2c_connections"] = max(1, min(32, int(value)))
         self.save()
 
     def set_network_indicator_enabled(self, value: bool) -> None:
