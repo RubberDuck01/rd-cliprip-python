@@ -1,0 +1,56 @@
+name: Build & Release
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Read version
+        id: version
+        run: |
+          $ver = python -c "import re; print(re.search(r'__version__\s*=\s*[^\d]*([\d.]+)', open('source/rd_cliprip/version.py').read()).group(1))"
+          echo "value=$ver" >> $env:GITHUB_OUTPUT
+
+      - name: Build EXE
+        run: python build.py
+
+      - name: Package as 7z
+        run: |
+          cd dist
+          7z a "RD-ClipRip-v${{ steps.version.outputs.value }}.7z" "RD ClipRip.exe"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RD-ClipRip-v${{ steps.version.outputs.value }}
+          path: dist/RD-ClipRip-v${{ steps.version.outputs.value }}.7z
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: RD ClipRip v${{ steps.version.outputs.value }}
+          files: dist/RD-ClipRip-v${{ steps.version.outputs.value }}.7z
