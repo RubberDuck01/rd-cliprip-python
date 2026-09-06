@@ -15,7 +15,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Rubber Duck's ClipRip")
 
-    icon_path = get_resources_dir() / "rd_cliprip_logo.png"
+    icon_path = get_resources_dir() / "rd" / "rd-cliprip-logo.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 

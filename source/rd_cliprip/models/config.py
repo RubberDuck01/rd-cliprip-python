@@ -51,6 +51,7 @@ class Config:
                 "remux_to_mp4": True,
                 "auto_retry": 1,
                 "max_download_speed_mbps": 0.0,
+                "show_banner": True,
                 "network_indicator_enabled": True,
                 "network_poll_interval": 15,
             },
@@ -122,6 +123,10 @@ class Config:
         return bool(self.data["settings"].get("network_indicator_enabled", True))
 
     @property
+    def show_banner(self) -> bool:
+        return bool(self.data["settings"].get("show_banner", True))
+
+    @property
     def network_poll_interval(self) -> int:
         try:
             return max(5, min(600, int(self.data["settings"].get("network_poll_interval", 15))))
@@ -183,6 +188,10 @@ class Config:
 
     def set_network_indicator_enabled(self, value: bool) -> None:
         self.data["settings"]["network_indicator_enabled"] = bool(value)
+        self.save()
+
+    def set_show_banner(self, value: bool) -> None:
+        self.data["settings"]["show_banner"] = bool(value)
         self.save()
 
     def set_network_poll_interval(self, seconds: int) -> None:

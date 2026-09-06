@@ -38,7 +38,7 @@ class DonationDialog(QDialog):
 
         # Open-source logo
         logo_label = QLabel()
-        logo_path = _RESOURCES / "open-source-logo.png"
+        logo_path = _RESOURCES / "web" / "open-source-logo.png"
         if logo_path.exists():
             pix = QPixmap(str(logo_path)).scaledToHeight(
                 72, Qt.TransformationMode.SmoothTransformation

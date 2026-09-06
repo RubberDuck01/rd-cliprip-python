@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 SOURCE = ROOT / "source"
 RESOURCES = SOURCE / "resources"
-ICON = RESOURCES / "rd_cliprip_logo.ico"
+ICON = RESOURCES / "rd" / "rd-cliprip-logo.ico"
 ENTRY = SOURCE / "main.py"
 
 args = [

@@ -49,7 +49,7 @@ class MainWindow(QMainWindow):
         self.manager = manager
         self.network_monitor = network_monitor
         self.setWindowTitle("Rubber Duck's ClipRip")
-        self.resize(940, 580)
+        self.resize(940, 720)
 
         self._build_menu()
         self._build_ui()
@@ -128,6 +128,11 @@ class MainWindow(QMainWindow):
         )
         view_menu.addAction(supported_action)
         view_menu.addSeparator()
+        self._banner_action = QAction("Show &Banner", self)
+        self._banner_action.setCheckable(True)
+        self._banner_action.setChecked(self.config.show_banner)
+        self._banner_action.toggled.connect(self._on_banner_toggled)
+        view_menu.addAction(self._banner_action)
         self._always_on_top_action = QAction("&Always on Top", self)
         self._always_on_top_action.setCheckable(True)
         self._always_on_top_action.toggled.connect(self._on_always_on_top_toggled)
@@ -166,12 +171,13 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(8, 6, 8, 8)
         layout.setSpacing(6)
 
-        # App header
-        header_layout = QVBoxLayout()
+        # App header (collapsible banner so the queue can reclaim the space)
+        self.header_widget = QWidget()
+        header_layout = QVBoxLayout(self.header_widget)
         header_layout.setSpacing(4)
         header_layout.setContentsMargins(0, 0, 0, 8)
         branding_label = QLabel()
-        branding_path = get_resources_dir() / "rd_cliprip_branding.png"
+        branding_path = get_resources_dir() / "rd" / "rd-cliprip-branding.png"
         if branding_path.exists():
             pix = QPixmap(str(branding_path))
             branding_label.setPixmap(
@@ -191,7 +197,8 @@ class MainWindow(QMainWindow):
         subtitle_label.setEnabled(False)
         subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_layout.addWidget(subtitle_label)
-        layout.addLayout(header_layout)
+        self.header_widget.setVisible(self.config.show_banner)
+        layout.addWidget(self.header_widget)
 
         # Add-to-queue group
         add_group = QGroupBox("Add to Queue")
@@ -359,6 +366,10 @@ class MainWindow(QMainWindow):
             flags &= ~Qt.WindowType.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self.show()
+
+    def _on_banner_toggled(self, checked: bool) -> None:
+        self.config.set_show_banner(checked)
+        self.header_widget.setVisible(checked)
 
     # ------------------------------------------------------------------
     #  Queue actions

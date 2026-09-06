@@ -61,7 +61,7 @@ class AboutDialog(QDialog):
         header_row.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self._icon_label = QLabel()
-        icon_path = _RESOURCES / "rd_cliprip_logo.png"
+        icon_path = _RESOURCES / "rd" / "rd-cliprip-logo.png"
         if icon_path.exists():
             pix = QPixmap(str(icon_path)).scaled(
                 64, 64,
