@@ -264,14 +264,15 @@ class MainWindow(QMainWindow):
 
         controls_row = QHBoxLayout()
         controls_row.setSpacing(6)
-        self.start_btn = QPushButton("Start Downloads")
+        self.start_btn = QPushButton("Download")
         self.start_btn.clicked.connect(self.manager.start)
         controls_row.addWidget(self.start_btn)
-        self.stop_btn = QPushButton("Stop")
+        self.stop_btn = QPushButton("Abort")
         self.stop_btn.clicked.connect(self.manager.stop)
         controls_row.addWidget(self.stop_btn)
         controls_row.addStretch()
         self.summary_label = QLabel("")
+        self.summary_label.setTextFormat(Qt.TextFormat.RichText)
         self.summary_label.setEnabled(False)
         controls_row.addWidget(self.summary_label)
         queue_layout.addLayout(controls_row)
@@ -604,13 +605,19 @@ class MainWindow(QMainWindow):
             self.summary_label.setText("")
             return
         counts = session.counts()
-        self.summary_label.setText(
-            f"{counts['completed']}/{counts['total']} done"
-            + (f"  ·  {counts['active']} active" if counts["active"] else "")
-            + (f"  ·  {counts['failed']} failed" if counts["failed"] else "")
-            + (f"  ·  {counts['cancelled']} cancelled" if counts["cancelled"] else "")
-            + (f"  ·  {counts['queued']} queued" if counts["queued"] else "")
-        )
+        parts = [
+            f"<span style='color:#2e7d32;'>{counts['completed']}</span>"
+            f"<span style='color:#555555;'>/{counts['total']}</span> done"
+        ]
+        if counts["active"]:
+            parts.append(f"<span style='color:#1565c0;'>{counts['active']} active</span>")
+        if counts["failed"]:
+            parts.append(f"<span style='color:#c62828;'>{counts['failed']} failed</span>")
+        if counts["cancelled"]:
+            parts.append(f"<span style='color:#9e9e9e;'>{counts['cancelled']} cancelled</span>")
+        if counts["queued"]:
+            parts.append(f"<span style='color:#555555;'>{counts['queued']} queued</span>")
+        self.summary_label.setText("  \u00b7  ".join(parts))
 
     def _update_controls(self) -> None:
         running = self.manager.running

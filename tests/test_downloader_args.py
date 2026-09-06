@@ -6,7 +6,11 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "source"))
 
 from rd_cliprip.services import downloader
-from rd_cliprip.services.downloader import OUTPUT_TEMPLATE
+from rd_cliprip.services.downloader import (
+    OUTPUT_TEMPLATE,
+    describe_failure,
+    is_fatal_error,
+)
 
 
 class BuildArgsTests(unittest.TestCase):
@@ -73,6 +77,15 @@ class BuildArgsTests(unittest.TestCase):
         # Keep staging paths short enough for Windows' ~260 char limit.
         self.assertIn("%(title).140s", OUTPUT_TEMPLATE)
         self.assertIn("[%(id)s]", OUTPUT_TEMPLATE)
+
+    def test_describe_failure_not_found(self):
+        self.assertEqual(describe_failure("ERROR: unable to extract hash from URL"), "Not found")
+        self.assertEqual(describe_failure("404: video not found"), "Not found")
+        self.assertNotEqual(describe_failure("HTTP Error 500"), "Not found")
+        self.assertEqual(describe_failure(""), "Failed")
+
+    def test_unable_to_extract_is_fatal(self):
+        self.assertTrue(is_fatal_error("ERROR: unable to extract anything"))
 
 
 if __name__ == "__main__":

@@ -88,6 +88,25 @@ _FATAL_HINTS = (
     "sign in to confirm",
     "account terminated",
     "executable not found",
+    "unable to extract",
+    "unable to download",
+)
+
+# Substrings that mean the video/page simply does not exist. Shown to the user
+# as a friendly 'Not found' instead of a raw yt-dlp extract error.
+_NOT_FOUND_HINTS = (
+    "404",
+    "not found",
+    "is not available",
+    "no longer exists",
+    "has been removed",
+    "removed by",
+    "does not exist",
+    "invalid url",
+    "is not a valid",
+    "not a valid url",
+    "unable to extract",
+    "unable to download",
 )
 
 
@@ -97,6 +116,20 @@ def is_fatal_error(message: str) -> bool:
         return True
     lowered = message.lower()
     return any(hint in lowered for hint in _FATAL_HINTS)
+
+
+def describe_failure(message: str) -> str:
+    """Return a short friendly label for a failed download.
+
+    Dead/nonexistent videos become 'Not found'; everything else keeps its
+    original (possibly raw) message.
+    """
+    if not message:
+        return "Failed"
+    lowered = message.lower()
+    if any(hint in lowered for hint in _NOT_FOUND_HINTS):
+        return "Not found"
+    return message
 
 
 def parse_ffmpeg_duration(text: str) -> int:
