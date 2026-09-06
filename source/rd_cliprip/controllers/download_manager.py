@@ -46,6 +46,7 @@ class DownloadManager(QObject):
     items_changed = pyqtSignal()  # queue composition changed
     status_message = pyqtSignal(str)
     all_finished = pyqtSignal()
+    running_changed = pyqtSignal(bool)  # True when a run starts, False when it ends/stops
     progress_updated = pyqtSignal(str, int, str, str, str)  # id, %, speed, eta, total
 
     def __init__(self, config: Config, stats: Stats) -> None:
@@ -322,6 +323,7 @@ class DownloadManager(QObject):
             self._threads.append(thread)
 
         self._running = True
+        self.running_changed.emit(True)
         self.status_message.emit(
             f"Downloading {len(pending)} item(s) with {agent_count} agent(s)..."
         )
@@ -344,6 +346,7 @@ class DownloadManager(QObject):
         self._drain_results()
 
         self._running = False
+        self.running_changed.emit(False)
         self.status_message.emit("Downloads paused. Items will resume next time.")
         self.items_changed.emit()
 
@@ -687,6 +690,7 @@ class DownloadManager(QObject):
         self._running = False
         self._stop.set()
         self._join_threads()
+        self.running_changed.emit(False)
 
         remaining = self.session.remaining() if self.session else 0
         if remaining == 0:

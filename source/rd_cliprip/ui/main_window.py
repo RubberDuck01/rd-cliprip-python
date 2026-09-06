@@ -2,8 +2,16 @@ import os
 import webbrowser
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QEvent, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QDesktopServices, QKeySequence, QPixmap
+from PyQt6.QtCore import QEvent, QRect, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QDesktopServices,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -13,8 +21,10 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -48,6 +58,7 @@ class MainWindow(QMainWindow):
         self.stats = stats
         self.manager = manager
         self.network_monitor = network_monitor
+        self.tray: QSystemTrayIcon | None = None
         self.setWindowTitle("Rubber Duck's ClipRip")
         self.resize(940, 720)
 
@@ -60,11 +71,13 @@ class MainWindow(QMainWindow):
         self.manager.status_message.connect(self.set_status)
         self.manager.all_finished.connect(self._on_all_finished)
         self.manager.progress_updated.connect(self.table.update_progress)
+        self.manager.running_changed.connect(self._on_running_changed)
         if self.manager.session is None:
             self.manager.new_session(self.config.downloads_dir)
 
         # Initial paint of the loaded/created session.
         self._on_items_changed()
+        self._init_tray()
 
         # Prompt to resume any leftover session.
         session = self.manager.session
@@ -372,6 +385,80 @@ class MainWindow(QMainWindow):
         self.header_widget.setVisible(checked)
 
     # ------------------------------------------------------------------
+    #  System tray
+    # ------------------------------------------------------------------
+
+    _TRAY_DIR = get_resources_dir() / "rd"
+
+    def _init_tray(self) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray = None
+            return
+        self.tray = QSystemTrayIcon(self)
+        menu = QMenu(self)
+        show_action = menu.addAction("Show / Hide")
+        show_action.triggered.connect(self._toggle_window)
+        menu.addSeparator()
+        exit_action = menu.addAction("Exit")
+        exit_action.triggered.connect(self.close)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.setIcon(self._tray_icon(self.manager.running))
+        self.tray.show()
+        self._update_tray_tooltip()
+
+    def _tray_icon(self, active: bool) -> QIcon:
+        name = "rd-cliprip-tray-active.png" if active else "rd-cliprip-tray-default.png"
+        path = self._TRAY_DIR / name
+        if path.exists():
+            return QIcon(str(path))
+        return self._placeholder_tray_icon(active)
+
+    @staticmethod
+    def _placeholder_tray_icon(active: bool) -> QIcon:
+        color = QColor("#2e7d32") if active else QColor("#d32f2f")
+        pix = QPixmap(64, 64)
+        pix.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawEllipse(QRect(8, 8, 48, 48))
+        painter.end()
+        return QIcon(pix)
+
+    def _on_running_changed(self, active: bool) -> None:
+        if self.tray is not None:
+            self.tray.setIcon(self._tray_icon(active))
+            self._update_tray_tooltip()
+
+    def _update_tray_tooltip(self) -> None:
+        if self.tray is None:
+            return
+        session = self.manager.session
+        counts = session.counts() if session else {}
+        text = "ClipRip \u2014 Ready"
+        if counts.get("total"):
+            text = (
+                f"ClipRip \u2014 {counts.get('completed', 0)}/{counts['total']} done"
+                + (f" \u00b7 {counts['active']} downloading" if counts.get("active") else "")
+                + (f" \u00b7 {counts['queued']} queued" if counts.get("queued") else "")
+            )
+        self.tray.setToolTip(text)
+
+    def _on_tray_activated(self, reason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self._toggle_window()
+
+    def _toggle_window(self) -> None:
+        if self.isVisible():
+            self.hide()
+        else:
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+
+    # ------------------------------------------------------------------
     #  Queue actions
     # ------------------------------------------------------------------
 
@@ -487,6 +574,7 @@ class MainWindow(QMainWindow):
         self._update_summary()
         self._sync_session_ui()
         self._update_controls()
+        self._update_tray_tooltip()
 
     def _sync_session_ui(self) -> None:
         """Show which session is active and which folder it downloads into."""
@@ -502,6 +590,13 @@ class MainWindow(QMainWindow):
 
     def _on_all_finished(self) -> None:
         self._update_controls()
+        if self.tray is not None:
+            self.tray.showMessage(
+                "RD ClipRip",
+                "All downloads finished!",
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
 
     def _update_summary(self) -> None:
         session = self.manager.session
