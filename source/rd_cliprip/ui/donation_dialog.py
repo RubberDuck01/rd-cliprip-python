@@ -16,11 +16,12 @@ _RESOURCES = get_resources_dir()
 
 _BODY = (
     "RD ClipRip is free and open-source software, and so are the tools that power it — "
-    "yt-dlp. Dozens of developers have poured countless hours into these projects "
+    "yt-dlp and FFmpeg. Dozens of developers have poured countless hours into these projects "
     "so that you can enjoy them at no cost.\n\n"
     "If ClipRip saves you time or brings you joy, please consider making a small donation. "
     "Even a coffee's worth makes a real difference and helps keep these projects alive.\n\n"
-    "Once you donate, get in touch with me on how to disable this popup for good.\n\nThank you for your support!"
+    "Once you donate, get in touch with me on how to disable this popup for good.\n\n"
+    "Thank you for your support!"
 )
 
 
@@ -29,8 +30,8 @@ class DonationDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Enjoying RD ClipRip?")
         self.setModal(True)
-        self.resize(480, 360)
-        self.setFixedSize(480, 360)
+        self.resize(540, 400)
+        self.setFixedSize(540, 400)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -57,24 +58,52 @@ class DonationDialog(QDialog):
         title_label.setWordWrap(True)
         layout.addWidget(title_label)
 
+        # Subtitle
+        subtitle_label = QLabel(
+            "Please consider supporting the developers who made this possible."
+        )
+        subtitle_font = subtitle_label.font()
+        subtitle_font.setItalic(True)
+        subtitle_label.setFont(subtitle_font)
+        subtitle_label.setEnabled(False)
+        subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle_label.setWordWrap(True)
+        layout.addWidget(subtitle_label)
+
         # Body
         body_label = QLabel(_BODY)
         body_label.setWordWrap(True)
-        body_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(body_label)
+        body_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(body_label, stretch=1)
 
-        layout.addStretch()
-
-        # Buttons
+        # Donation / support buttons
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
-        donate_btn = QPushButton("Donate")
-        donate_btn.setDefault(True)
-        donate_btn.clicked.connect(
-            lambda: webbrowser.open("https://buymeacoffee.com/rubberduck")
+
+        kofi_btn = QPushButton("Donate to Rubber Duck (Ko-fi) \u2665")
+        kofi_btn.clicked.connect(
+            lambda: webbrowser.open("https://ko-fi.com/rubberduck01")
         )
-        btn_row.addWidget(donate_btn)
-        later_btn = QPushButton("Maybe Later")
-        later_btn.clicked.connect(self.reject)
-        btn_row.addWidget(later_btn)
+        btn_row.addWidget(kofi_btn)
+
+        ytdlp_btn = QPushButton("yt-dlp repository")
+        ytdlp_btn.clicked.connect(
+            lambda: webbrowser.open("https://github.com/yt-dlp/yt-dlp")
+        )
+        btn_row.addWidget(ytdlp_btn)
+
+        ffmpeg_btn = QPushButton("FFmpeg donations")
+        ffmpeg_btn.clicked.connect(
+            lambda: webbrowser.open("https://ffmpeg.org/donations.html")
+        )
+        btn_row.addWidget(ffmpeg_btn)
+
         layout.addLayout(btn_row)
+
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setDefault(True)
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        layout.addLayout(close_row)
