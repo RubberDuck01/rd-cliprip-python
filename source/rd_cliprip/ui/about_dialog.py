@@ -49,22 +49,23 @@ class AboutDialog(QDialog):
         self._icon_clicks = 0
         self.setWindowTitle("RD ClipRip - About")
         self.setModal(True)
-        self.resize(480, 340)
+        self.resize(560, 620)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        # Icon + app name row
+        # Icon + app name row (logo shown big and proud)
         header_row = QHBoxLayout()
-        header_row.setSpacing(16)
+        header_row.setSpacing(20)
         header_row.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self._icon_label = QLabel()
         icon_path = _RESOURCES / "rd" / "rd-cliprip-logo.png"
         if icon_path.exists():
             pix = QPixmap(str(icon_path)).scaled(
-                64, 64,
+                140,
+                140,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -75,53 +76,69 @@ class AboutDialog(QDialog):
         header_row.addWidget(self._icon_label)
 
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(4)
+        info_layout.setSpacing(6)
 
         name_label = QLabel("RD ClipRip")
         name_font = name_label.font()
-        name_font.setPointSize(name_font.pointSize() + 6)
+        name_font.setPointSize(name_font.pointSize() + 5)
         name_font.setBold(True)
         name_label.setFont(name_font)
         info_layout.addWidget(name_label)
 
-        version_label = QLabel(f"Version {__version__}")
+        desc_label = QLabel(
+            "The EZ video downloader.\nBuilt with Python and Qt6, powered by yt-dlp."
+        )
+        info_layout.addWidget(desc_label)
+
+        version_label = QLabel(f"Version: {__version__}")
+        version_font = version_label.font()
+        version_font.setItalic(True)
+        version_label.setFont(version_font)
         version_label.setEnabled(False)
         info_layout.addWidget(version_label)
 
-        desc_label = QLabel("Powerful video downloader — Made with \u2665 by Rubber Duck")
-        desc_label.setWordWrap(True)
-        info_layout.addWidget(desc_label)
-
-        info_layout.addSpacing(8)
-
-        powered_label = QLabel("Powered by yt-dlp and PyQt6")
-        powered_label.setEnabled(False)
-        info_layout.addWidget(powered_label)
-
-        header_row.addLayout(info_layout, stretch=1)
+        header_row.addLayout(info_layout)
+        header_row.addStretch()
         layout.addLayout(header_row)
 
-        # Donation checkbox (hidden until 13 clicks)
-        self._donation_check = QCheckBox("I have donated (enable to dismiss the donation popup)")
-        self._donation_check.setVisible(False)
-        if self.config:
-            self._donation_check.setChecked(self.config.i_have_donated)
-            self._donation_check.toggled.connect(lambda checked: self.config.set_i_have_donated(checked))
-        layout.addWidget(self._donation_check)
+        # License text (same readable text box as AudioRip)
+        license_edit = QTextEdit()
+        license_edit.setReadOnly(True)
+        license_edit.setPlainText(_UNLICENSE)
+        layout.addWidget(license_edit, stretch=1)
 
-        # License text
-        license_label = QLabel(_UNLICENSE)
-        license_label.setWordWrap(True)
-        license_label.setEnabled(False)
-        license_font = license_label.font()
-        license_font.setPointSize(license_font.pointSize() - 1)
-        license_label.setFont(license_font)
-        layout.addWidget(license_label, stretch=1)
+        # Hidden donation opt-out section (revealed after 13 icon clicks)
+        self._donation_section = QWidget()
+        don_layout = QVBoxLayout(self._donation_section)
+        don_layout.setContentsMargins(0, 4, 0, 0)
+        don_layout.setSpacing(4)
+
+        don_hint = QLabel(
+            "Be honest and only tick this option if you have actually donated.\n"
+            "It will permanently silence the donation popup that appears on exit.\n\n"
+            "If you found this by mashing the logo, you clearly enjoy the app - "
+            "but a small donation helps keep ClipRip alive. Pretty please? ;)"
+        )
+        don_hint_font = don_hint.font()
+        don_hint_font.setItalic(True)
+        don_hint_font.setPointSize(don_hint_font.pointSize() - 1)
+        don_hint.setFont(don_hint_font)
+        don_hint.setEnabled(False)
+        don_hint.setWordWrap(True)
+        don_layout.addWidget(don_hint)
+
+        self._donated_check = QCheckBox("I have donated (and I promise I'm not a liar)")
+        if self.config is not None:
+            self._donated_check.setChecked(self.config.i_have_donated)
+        self._donated_check.toggled.connect(self._on_donated_toggled)
+        don_layout.addWidget(self._donated_check)
+
+        self._donation_section.setVisible(False)
+        layout.addWidget(self._donation_section)
 
         # Buttons
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(6)
-        github_btn = QPushButton("View Source on GitHub")
+        github_btn = QPushButton("Source Code (GitHub)")
         github_btn.clicked.connect(
             lambda: webbrowser.open("https://github.com/RubberDuck01/rd-cliprip-python")
         )
@@ -135,5 +152,15 @@ class AboutDialog(QDialog):
 
     def _on_icon_clicked(self, event) -> None:
         self._icon_clicks += 1
-        if self._icon_clicks >= self._CLICKS_REQUIRED:
-            self._donation_check.setVisible(True)
+        remaining = self._CLICKS_REQUIRED - self._icon_clicks
+        if remaining > 0:
+            self._icon_label.setToolTip(
+                f"{remaining} more click{'s' if remaining != 1 else ''}..."
+            )
+        else:
+            self._icon_label.setToolTip("")
+            self._donation_section.setVisible(True)
+
+    def _on_donated_toggled(self, checked: bool) -> None:
+        if self.config is not None:
+            self.config.set_i_have_donated(checked)
