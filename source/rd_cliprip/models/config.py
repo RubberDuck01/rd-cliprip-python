@@ -48,7 +48,7 @@ class Config:
                 "cookies_path": "",
                 "clipboard_paste_enabled": True,
                 "max_concurrent_downloads": 1,
-                "remux_to_mp4": True,
+                "remux_to_mp4": False,
                 "auto_retry": 1,
                 "max_download_speed_mbps": 0.0,
                 "show_banner": True,
@@ -102,7 +102,7 @@ class Config:
 
     @property
     def remux_to_mp4(self) -> bool:
-        return bool(self.data["settings"].get("remux_to_mp4", True))
+        return bool(self.data["settings"].get("remux_to_mp4", False))
 
     @property
     def auto_retry(self) -> int:

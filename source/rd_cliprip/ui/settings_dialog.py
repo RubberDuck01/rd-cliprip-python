@@ -22,7 +22,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.config = config
         self.setWindowTitle("RD ClipRip - Settings")
-        self.resize(560, 660)
+        self.resize(600, 780)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
@@ -67,9 +67,20 @@ class SettingsDialog(QDialog):
         row.addStretch()
         proc_form.addRow("Simultaneous downloads:", row)
 
-        self.remux_check = QCheckBox("Remux completed videos to MP4 (needs FFmpeg)")
+        self.remux_check = QCheckBox("Remux completed videos to MP4 (optional, needs FFmpeg)")
         self.remux_check.setChecked(self.config.remux_to_mp4)
         proc_form.addRow(self.remux_check)
+        remux_desc = QLabel(
+            "Off by default: MP4 already prefers H.264/AAC files, which play and "
+            "show thumbnails everywhere (MEGA, phones, etc.). Turn this on only "
+            "if you want to force other sources into an MP4 container."
+        )
+        remux_desc.setWordWrap(True)
+        remux_desc.setEnabled(False)
+        remux_desc_font = remux_desc.font()
+        remux_desc_font.setPointSize(remux_desc_font.pointSize() - 1)
+        remux_desc.setFont(remux_desc_font)
+        proc_form.addRow(remux_desc)
 
         self.retry_spin = QSpinBox()
         self.retry_spin.setRange(0, 5)
@@ -110,6 +121,16 @@ class SettingsDialog(QDialog):
         idx = {"mp4": 0, "mkv": 1, "webm": 2}.get(fmt, 0)
         self.format_combo.setCurrentIndex(idx)
         proc_form.addRow("Video format:", self.format_combo)
+        format_desc = QLabel(
+            "MP4: prefers a single H.264/AAC file (broadest compatibility), "
+            "avoids AV1 unless nothing else is available."
+        )
+        format_desc.setWordWrap(True)
+        format_desc.setEnabled(False)
+        format_desc_font = format_desc.font()
+        format_desc_font.setPointSize(format_desc_font.pointSize() - 1)
+        format_desc.setFont(format_desc_font)
+        proc_form.addRow(format_desc)
 
         self.resolution_combo = QComboBox()
         self.resolution_combo.addItems(["2160p (4K)", "1440p (2K)", "1080p", "720p", "480p", "360p"])

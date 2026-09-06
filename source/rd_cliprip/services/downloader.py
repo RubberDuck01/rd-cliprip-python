@@ -412,8 +412,17 @@ def build_ytdlp_args(
 
     # Format selection for video
     if preferred_format == "mp4":
-        # Best mp4 video + audio merged
-        fmt = f"bestvideo[ext=mp4][height<={_parse_resolution(preferred_resolution)}]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        # Prefer a single-file MP4 with broadly-compatible codecs. AV1-in-MP4
+        # plays fine but many thumbnailers/cloud services (e.g. MEGA) can't
+        # decode it, so AV1 is only used as a last resort.
+        height = _parse_resolution(preferred_resolution)
+        fmt = (
+            f"best[ext=mp4][vcodec=h264][height<={height}]"
+            f"/best[ext=mp4][vcodec!=av1][height<={height}]"
+            f"/bestvideo[vcodec=h264][height<={height}]+bestaudio[ext=m4a]"
+            f"/bestvideo[vcodec!=av1][height<={height}]+bestaudio[ext=m4a]"
+            f"/best"
+        )
     elif preferred_format == "mkv":
         fmt = f"bestvideo[height<={_parse_resolution(preferred_resolution)}]+bestaudio/best"
         args.insert(2, "--merge-output-format")
