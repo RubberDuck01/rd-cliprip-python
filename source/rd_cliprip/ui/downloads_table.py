@@ -1,5 +1,5 @@
 from PyQt6.QtCore import QEvent, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QMouseEvent, QPalette
+from PyQt6.QtGui import QBrush, QColor, QFont, QMouseEvent, QPalette, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -8,7 +8,6 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QStyle,
     QStyledItemDelegate,
-    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -87,18 +86,39 @@ class _BandDelegate(QStyledItemDelegate):
         elif hovered:
             painter.fillRect(option.rect, self._table._hover_color)
 
-        opt = QStyleOptionViewItem(option)
-        opt.state &= ~(
-            QStyle.StateFlag.State_Selected
-            | QStyle.StateFlag.State_HasFocus
-            | QStyle.StateFlag.State_MouseOver
-        )
-        opt.backgroundBrush = QBrush()
+        # Draw the text ourselves with an explicitly normal-weight font so
+        # selection can never make it bold.
+        text = index.data(Qt.ItemDataRole.DisplayRole)
+        if text is None:
+            text = ""
+        font = QFont(option.font)
+        font.setBold(False)
+        painter.setFont(font)
+
         if selected:
-            text_color = self._table._sel_text
-            opt.palette.setColor(QPalette.ColorRole.Text, text_color)
-            opt.palette.setColor(QPalette.ColorRole.HighlightedText, text_color)
-        super().paint(painter, opt, index)
+            color = self._table._sel_text
+        else:
+            fg = index.data(Qt.ItemDataRole.ForegroundRole)
+            color = (
+                fg.color()
+                if isinstance(fg, QBrush)
+                else QColor(option.palette.color(QPalette.ColorRole.Text))
+            )
+        painter.setPen(QPen(color))
+
+        align_data = index.data(Qt.ItemDataRole.TextAlignmentRole)
+        if align_data is not None:
+            alignment = int(align_data)
+        else:
+            alignment = int(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            )
+
+        rect = option.rect.adjusted(4, 0, -4, 0)
+        elided = painter.fontMetrics().elidedText(
+            str(text), Qt.TextElideMode.ElideRight, rect.width()
+        )
+        painter.drawText(rect, alignment, elided)
 
 
 class DownloadsTable(QTableWidget):
@@ -137,6 +157,9 @@ class DownloadsTable(QTableWidget):
         self.setColumnWidth(_COL_SIZE, 90)
         self.setColumnWidth(_COL_STATUS, 110)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        header_font = self.horizontalHeader().font()
+        header_font.setBold(False)
+        self.horizontalHeader().setFont(header_font)
 
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -340,7 +363,7 @@ class DownloadsTable(QTableWidget):
         if isinstance(widget, QProgressBar):
             widget.setStyleSheet(self._bar_stylesheet(state, None))
 
-    def _bar_stylesheet(self, state: str, band: QColor | None) -> str:
+    def _bar_stylesheet(self, state: str, band: QColor | None, selected: bool = False) -> str:
         """Stylesheet for a progress bar. ``band`` tints the whole track to the
         row's hover/selection colour (progress cell is a real widget, so the band
         must be painted on the bar itself rather than composited underneath)."""
@@ -348,11 +371,12 @@ class DownloadsTable(QTableWidget):
         if band is None:
             background = "transparent"
             text_color = ""
+        elif selected:
+            background = _rgba(band)
+            text_color = "#ffffff"
         else:
             background = _rgba(band)
-            text_color = (
-                "#ffffff" if band.lightness() < 128 else "#000000"
-            )
+            text_color = "#ffffff" if band.lightness() < 128 else "#000000"
         css = (
             f"QProgressBar {{ background: {background};"
             f"{f' color: {text_color};' if text_color else ''}"
@@ -454,14 +478,19 @@ class DownloadsTable(QTableWidget):
                 continue
             if self.selectionModel().isRowSelected(row, self.model().index(0, 0).parent()):
                 band = self._sel_color
+                selected = True
             elif row == self._hover_row:
                 band = self._hover_fill
+                selected = False
             else:
                 band = None
+                selected = False
             bar = self._progress_for_id.get(item_id)
             if isinstance(bar, QProgressBar):
                 bar.setStyleSheet(
-                    self._bar_stylesheet(self._state_for_id.get(item_id, STATE_QUEUED), band)
+                    self._bar_stylesheet(
+                        self._state_for_id.get(item_id, STATE_QUEUED), band, selected
+                    )
                 )
 
     def _on_selection_changed(self, _selected, _deselected) -> None:

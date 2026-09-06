@@ -1,5 +1,7 @@
+import os
 import queue
 import shutil
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any
@@ -332,13 +334,7 @@ class DownloadManager(QObject):
             return
 
         self._stop.set()
-        with self._lock:
-            for item_id, proc in list(self._procs.items()):
-                self._kill_cause[item_id] = "stop"
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+        self._kill_all_active("stop")
 
         if self.session is not None:
             self.session.reset_for_resume()
@@ -351,16 +347,38 @@ class DownloadManager(QObject):
         self.status_message.emit("Downloads paused. Items will resume next time.")
         self.items_changed.emit()
 
+    def _kill_all_active(self, cause: str) -> None:
+        with self._lock:
+            for item_id, proc in list(self._procs.items()):
+                self._kill_cause[item_id] = cause
+                self._kill_tree(proc)
+
+    @staticmethod
+    def _kill_tree(proc) -> None:
+        """Terminate a subprocess and any children (yt-dlp's ffmpeg merges etc.)."""
+        try:
+            if proc.poll() is None:
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                else:
+                    proc.kill()
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
     def cancel_item(self, item_id: str) -> None:
         """Stop a single running download now (kept in the list as cancelled)."""
         with self._lock:
             proc = self._procs.get(item_id)
             if proc is not None:
                 self._kill_cause[item_id] = "cancel"
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+                self._kill_tree(proc)
                 return
         item = self.session.get_item(item_id) if self.session else None
         if item is not None and item.state in RESUMABLE_STATES:
@@ -390,10 +408,7 @@ class DownloadManager(QObject):
             proc = self._procs.get(item_id)
             if proc is not None:
                 self._kill_cause[item_id] = "remove"
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+                self._kill_tree(proc)
         self.session.items = [i for i in self.session.items if i.id != item_id]
         self.session.save()
         self.items_changed.emit()
@@ -430,6 +445,12 @@ class DownloadManager(QObject):
     def _register_proc(self, item_id: str, proc: Any) -> None:
         with self._lock:
             self._procs[item_id] = proc
+            # A stop may have been requested while this process was still being
+            # started; make sure it is killed immediately rather than allowed to
+            # keep downloading after Stop.
+            if self._stop.is_set():
+                self._kill_cause[item_id] = "stop"
+                self._kill_tree(proc)
 
     def _unregister_proc(self, item_id: str) -> None:
         with self._lock:

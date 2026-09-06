@@ -175,7 +175,7 @@ class MainWindow(QMainWindow):
         if branding_path.exists():
             pix = QPixmap(str(branding_path))
             branding_label.setPixmap(
-                pix.scaledToHeight(52, Qt.TransformationMode.SmoothTransformation)
+                pix.scaledToHeight(192, Qt.TransformationMode.SmoothTransformation)
             )
         else:
             branding_label.setText("RD ClipRip")
@@ -186,7 +186,7 @@ class MainWindow(QMainWindow):
         branding_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_layout.addWidget(branding_label)
         subtitle_label = QLabel(
-            "Powerful video downloader — Made with \u2665 by Rubber Duck"
+            "RD's Powerful Video Downloader & Converter"
         )
         subtitle_label.setEnabled(False)
         subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
