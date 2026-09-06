@@ -6,6 +6,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "source"))
 
 from rd_cliprip.services import downloader
+from rd_cliprip.services.downloader import OUTPUT_TEMPLATE
 
 
 class BuildArgsTests(unittest.TestCase):
@@ -61,6 +62,11 @@ class BuildArgsTests(unittest.TestCase):
     def test_ffmpeg_location_flag(self):
         args = self._args(ffmpeg_location=r"C:\tools")
         self.assertEqual(args[args.index("--ffmpeg-location") + 1], r"C:\tools")
+
+    def test_output_template_truncates_title(self):
+        # Keep staging paths short enough for Windows' ~260 char limit.
+        self.assertIn("%(title).140s", OUTPUT_TEMPLATE)
+        self.assertIn("[%(id)s]", OUTPUT_TEMPLATE)
 
 
 if __name__ == "__main__":

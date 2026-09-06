@@ -28,6 +28,11 @@ VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv", ".ts", ".m4v"}
 # Strip a trailing yt-dlp id suffix: "Title [aBc123]" -> "Title"
 _ID_SUFFIX_RE = re.compile(r"\s*\[[^\]]+\]\s*$")
 
+# Staging filename template. The title is capped so the full path stays well
+# under Windows' ~260 char limit even for sites with very long titles
+# (otherwise yt-dlp fails with 'unable to open for writing: invalid argument').
+OUTPUT_TEMPLATE = "%(title).140s [%(id)s].%(ext)s"
+
 # ffmpeg "-i" reports container duration on stderr as:  Duration: 01:23:45.67
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+)")
 
@@ -584,7 +589,7 @@ def run_single_item(
         }
 
     staging_dir.mkdir(parents=True, exist_ok=True)
-    output_template = "%(title)s [%(id)s].%(ext)s"
+    output_template = OUTPUT_TEMPLATE
 
     try:
         args = build_ytdlp_args(
