@@ -10,6 +10,7 @@ from rd_cliprip.services.downloader import (
     OUTPUT_TEMPLATE,
     describe_failure,
     is_fatal_error,
+    parse_progress_line,
 )
 
 
@@ -103,8 +104,38 @@ class BuildArgsTests(unittest.TestCase):
         self.assertNotEqual(describe_failure("HTTP Error 500"), "Not found")
         self.assertEqual(describe_failure(""), "Failed")
 
+    def test_describe_failure_categories(self):
+        self.assertEqual(describe_failure("ERROR: Unsupported URL: xyz"), "Invalid URL")
+        self.assertEqual(describe_failure("This is a private video"), "Private")
+        self.assertEqual(describe_failure("HTTP Error 500"), "HTTP Error 500")
+
     def test_unable_to_extract_is_fatal(self):
         self.assertTrue(is_fatal_error("ERROR: unable to extract anything"))
+
+    def test_parse_aria2c_progress_line(self):
+        info = parse_progress_line(
+            "[#780e9f 320KiB/2.0MiB(15%) CN:1 DL:320KiB ETA:5s]"
+        )
+        self.assertEqual(info["percent"], 15)
+        self.assertEqual(info["total"], "2.0MiB")
+        self.assertEqual(info["speed"], "320KiB/s")
+        self.assertEqual(info["eta"], "5s")
+
+    def test_parse_aria2c_without_eta(self):
+        info = parse_progress_line("[#780e9f 1.8MiB/2.0MiB(93%) CN:1 DL:319KiB]")
+        self.assertEqual(info["percent"], 93)
+        self.assertEqual(info["total"], "2.0MiB")
+        self.assertEqual(info["speed"], "319KiB/s")
+        self.assertEqual(info["eta"], "")
+
+    def test_parse_native_progress_still_works(self):
+        info = parse_progress_line(
+            "[download]  12.5% of  125.00MiB at    2.05MiB/s ETA 00:44"
+        )
+        self.assertEqual(info["percent"], 12)
+        self.assertEqual(info["total"], "125.00MiB")
+        self.assertEqual(info["speed"], "2.05MiB/s")
+        self.assertEqual(info["eta"], "00:44")
 
 
 if __name__ == "__main__":

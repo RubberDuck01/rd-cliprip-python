@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self.manager = manager
         self.network_monitor = network_monitor
         self.tray: QSystemTrayIcon | None = None
+        self._table_ids: list[str] = []
         self.setWindowTitle(f"Rubber Duck's ClipRip v{__version__}")
         self.resize(940, 720)
 
@@ -575,7 +576,15 @@ class MainWindow(QMainWindow):
     def _on_items_changed(self) -> None:
         session = self.manager.session
         items = session.items if session else []
-        self.table.refresh_items(items)
+        ids = [i.id for i in items]
+        if ids != self._table_ids:
+            # Composition changed (add/remove/clear/switch): rebuild the table.
+            self.table.refresh_items(items)
+            self._table_ids = ids
+        else:
+            # Same rows: update in place so scroll position and selection survive.
+            for item in items:
+                self.table.update_item(item)
         self._update_summary()
         self._sync_session_ui()
         self._update_controls()
