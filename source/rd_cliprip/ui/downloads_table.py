@@ -266,6 +266,19 @@ class DownloadsTable(QTableWidget):
             self.setItem(row, _COL_ETA, QTableWidgetItem(_DASH))
             self.setItem(row, _COL_SIZE, self._size_cell(item))
             self._set_cells_align(row)
+        elif item.state != STATE_ACTIVE:
+            # Left the active state (stopped/queued/failed/cancelled): clear the
+            # live Speed / ETA / Size columns back to dashes.
+            self.setItem(row, _COL_SPEED, QTableWidgetItem(_DASH))
+            self.setItem(row, _COL_ETA, QTableWidgetItem(_DASH))
+            self.setItem(row, _COL_SIZE, QTableWidgetItem(_DASH))
+            self._set_cells_align(row)
+        elif item.progress <= 0:
+            # Freshly (re)started: drop stale values until the first progress line.
+            self.setItem(row, _COL_SPEED, QTableWidgetItem(_DASH))
+            self.setItem(row, _COL_ETA, QTableWidgetItem(_DASH))
+            self.setItem(row, _COL_SIZE, QTableWidgetItem(_DASH))
+            self._set_cells_align(row)
 
         name_cell = self.item(row, _COL_ITEM)
         if name_cell is not None and item.title:
