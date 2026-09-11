@@ -45,17 +45,11 @@ class StatsDialog(QDialog):
 
         # Timeline
         timeline_group = QGroupBox("Timeline")
-        timeline_layout = QGridLayout(timeline_group)
+        timeline_layout = QHBoxLayout(timeline_group)
         timeline_layout.setContentsMargins(10, 12, 10, 10)
-        timeline_layout.setHorizontalSpacing(16)
-        timeline_layout.setVerticalSpacing(6)
-        timeline_layout.addWidget(QLabel("Profile created:"), 0, 0)
-        self._created_label = QLabel()
-        timeline_layout.addWidget(self._created_label, 0, 1)
-        timeline_layout.addWidget(QLabel("Last run:"), 1, 0)
-        self._last_run_label = QLabel()
-        timeline_layout.addWidget(self._last_run_label, 1, 1)
-        timeline_layout.setColumnStretch(2, 1)
+        timeline_layout.setSpacing(10)
+        timeline_layout.addWidget(self._info_card("created", "Profile created", "#1565c0"))
+        timeline_layout.addWidget(self._info_card("last_run", "Last run", "#2e7d32"))
         layout.addWidget(timeline_group)
 
         # Session history
@@ -103,11 +97,12 @@ class StatsDialog(QDialog):
     #  Building / refresh
     # ------------------------------------------------------------------
 
+    _TILE_STYLE = "QFrame#statTile { background: rgba(128, 128, 128, 28); border-radius: 8px; }"
+
     def _tile(self, key: str, caption: str, color: str) -> QWidget:
         frame = QFrame()
-        frame.setStyleSheet(
-            "QFrame { background: rgba(128, 128, 128, 28); border-radius: 8px; }"
-        )
+        frame.setObjectName("statTile")
+        frame.setStyleSheet(self._TILE_STYLE)
         frame_layout = QVBoxLayout(frame)
         frame_layout.setContentsMargins(14, 10, 14, 10)
         frame_layout.setSpacing(2)
@@ -128,6 +123,29 @@ class StatsDialog(QDialog):
         self._tile_values[key] = value_label
         return frame
 
+    def _info_card(self, key: str, caption: str, color: str) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("statTile")
+        frame.setStyleSheet(self._TILE_STYLE)
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(14, 10, 14, 10)
+        frame_layout.setSpacing(2)
+
+        caption_label = QLabel(caption)
+        caption_label.setEnabled(False)
+
+        value_label = QLabel("N/A")
+        value_font = value_label.font()
+        value_font.setPointSize(value_font.pointSize() + 2)
+        value_font.setBold(True)
+        value_label.setFont(value_font)
+        value_label.setStyleSheet(f"color: {color};")
+
+        frame_layout.addWidget(caption_label)
+        frame_layout.addWidget(value_label)
+        self._tile_values[key] = value_label
+        return frame
+
     def _refresh(self) -> None:
         data = self.stats.data
         self._tile_values["downloads"].setText(
@@ -141,10 +159,10 @@ class StatsDialog(QDialog):
         )
         self._tile_values["sessions"].setText(str(data.get("total_sessions", 0)))
 
-        self._created_label.setText(
+        self._tile_values["created"].setText(
             format_dt_short(data.get("created_date", "")) or "N/A"
         )
-        self._last_run_label.setText(
+        self._tile_values["last_run"].setText(
             format_dt_short(data.get("last_run_date", "")) or "N/A"
         )
         self._populate_sessions()
