@@ -718,6 +718,6 @@ class DownloadManager(QObject):
             self.all_finished.emit()
         else:
             self.status_message.emit(
-                f"Finished with {remaining} item(s) left to retry."
+                f"Finished with {remaining} URL(s) left to retry."
             )
         self.items_changed.emit()
