@@ -1,5 +1,6 @@
 import os
 import webbrowser
+from html import escape
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QRect, Qt, QTimer, QUrl, pyqtSignal
@@ -73,6 +74,7 @@ class MainWindow(QMainWindow):
         self.manager.status_message.connect(self.set_status)
         self.manager.all_finished.connect(self._on_all_finished)
         self.manager.progress_updated.connect(self.table.update_progress)
+        self.manager.progress_updated.connect(self._on_progress_status)
         self.manager.running_changed.connect(self._on_running_changed)
         if self.manager.session is None:
             self.manager.new_session(self.config.downloads_dir)
@@ -293,6 +295,7 @@ class MainWindow(QMainWindow):
         status_row = QHBoxLayout()
         status_row.setSpacing(6)
         self.status_label = QLabel("Ready!")
+        self.status_label.setTextFormat(Qt.TextFormat.RichText)
         status_row.addWidget(self.status_label, stretch=1)
         clear_finished_btn = QPushButton("Clear Finished")
         clear_finished_btn.clicked.connect(self.clear_finished)
@@ -696,7 +699,41 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def set_status(self, text: str) -> None:
-        self.status_label.setText(text)
+        # Status label is rich text (for the coloured live line); escape plain
+        # messages so any stray '<' etc. can't be parsed as markup.
+        self.status_label.setText(escape(text))
+
+    def _on_progress_status(self, item_id, percent, speed, eta, total) -> None:
+        """Show a glanceable, colour-coded live status while downloading."""
+        session = self.manager.session
+        if session is None:
+            return
+        item = session.get_item(item_id)
+        title = (item.title or item.url) if item is not None else ""
+        if len(title) > 60:
+            title = title[:57] + "\u2026"
+
+        counts = session.counts()
+        active = counts["active"]
+        agent_word = "agent" if active == 1 else "agents"
+        counts_html = (
+            f"<span style='color:#2e7d32;'>{counts['completed']}</span>"
+            f"<span style='color:#555555;'>/{counts['total']}</span> "
+            f"<span style='color:#1565c0;'>({active} {agent_word})</span>"
+        )
+        parts = [counts_html]
+        if title:
+            parts.append(escape(title))
+        live = []
+        if speed:
+            live.append(f"<span style='color:#1565c0;'>{escape(speed)}</span>")
+        if eta:
+            live.append(f"<span style='color:#b26a00;'>ETA: {escape(eta)}</span>")
+        if total:
+            live.append(f"<span style='color:#555555;'>of {escape(total)}</span>")
+        if live:
+            parts.append("  \u00b7  ".join(live))
+        self.status_label.setText("  \u2014  ".join(parts))
 
     # ------------------------------------------------------------------
     #  Dialogs & helpers

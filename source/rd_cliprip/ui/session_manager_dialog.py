@@ -1,5 +1,5 @@
 from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtGui import QBrush, QColor, QFont, QMouseEvent, QPalette, QPen
+from PyQt6.QtGui import QColor, QMouseEvent, QPalette
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -9,8 +9,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QStyle,
-    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -18,6 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from rd_cliprip.controllers.download_manager import DownloadManager
+from rd_cliprip.ui.row_band import BandDelegate as _BandDelegate, _blend, _rgba
 from rd_cliprip.utils import format_dt_short
 
 _COL_LABEL = 0
@@ -29,70 +28,6 @@ _COLOR_ACTIVE = QColor("#1565c0")
 _COLOR_REMAINING = QColor("#b26a00")
 _COLOR_DONE = QColor("#2e7d32")
 _COLOR_EMPTY = QColor("#9e9e9e")
-
-
-def _blend(c1: QColor, c2: QColor, t: float) -> QColor:
-    return QColor(
-        round(c1.red() + (c2.red() - c1.red()) * t),
-        round(c1.green() + (c2.green() - c1.green()) * t),
-        round(c1.blue() + (c2.blue() - c1.blue()) * t),
-    )
-
-
-def _rgba(color: QColor) -> str:
-    return f"rgba({color.red()},{color.green()},{color.blue()},{color.alpha()})"
-
-
-class _BandDelegate(QStyledItemDelegate):
-    """Paint selection / hover as one plain band per row (qBittorrent-like)."""
-
-    def __init__(self, table) -> None:
-        super().__init__(table)
-        self._table = table
-
-    def paint(self, painter, option, index) -> None:
-        row = index.row()
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        hovered = not selected and row == self._table._hover_row
-
-        if selected:
-            painter.fillRect(option.rect, self._table._sel_color)
-        elif hovered:
-            painter.fillRect(option.rect, self._table._hover_color)
-
-        # Draw the text ourselves with an explicitly normal-weight font so
-        # selection can never make it bold.
-        text = index.data(Qt.ItemDataRole.DisplayRole)
-        if text is None:
-            text = ""
-        font = QFont(option.font)
-        font.setBold(False)
-        painter.setFont(font)
-
-        if selected:
-            color = self._table._sel_text
-        else:
-            fg = index.data(Qt.ItemDataRole.ForegroundRole)
-            color = (
-                fg.color()
-                if isinstance(fg, QBrush)
-                else QColor(option.palette.color(QPalette.ColorRole.Text))
-            )
-        painter.setPen(QPen(color))
-
-        align_data = index.data(Qt.ItemDataRole.TextAlignmentRole)
-        if align_data is not None:
-            alignment = int(align_data)
-        else:
-            alignment = int(
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-            )
-
-        rect = option.rect.adjusted(4, 0, -4, 0)
-        elided = painter.fontMetrics().elidedText(
-            str(text), Qt.TextElideMode.ElideRight, rect.width()
-        )
-        painter.drawText(rect, alignment, elided)
 
 
 class SessionManagerDialog(QDialog):

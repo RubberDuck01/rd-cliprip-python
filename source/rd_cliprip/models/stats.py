@@ -57,6 +57,14 @@ class Stats:
         self.data["total_sessions"] = int(self.data.get("total_sessions", 0)) + 1
         self.save()
 
+    def reset(self) -> None:
+        """Zero out the aggregate statistics (keeps created/last-run dates)."""
+        self.data["total_sessions"] = 0
+        self.data["total_files_downloaded"] = 0
+        self.data["total_downloads_size"] = 0.0
+        self.data["total_downloads_duration"] = 0
+        self.save()
+
     def add_successful_download(
         self, size_mb: float, duration_sec: int, file_count: int = 1
     ) -> None:
