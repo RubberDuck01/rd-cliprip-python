@@ -15,6 +15,8 @@ YTDLP_EXE = "yt-dlp.exe"
 YTDLP_DOWNLOAD_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 FFMPEG_EXE = "ffmpeg.exe"
 FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+ARIA2C_EXE = "aria2c.exe"
+ARIA2C_API_URL = "https://api.github.com/repos/aria2/aria2/releases/latest"
 
 # Suppress the console window that would otherwise flash on Windows when
 # spawning child processes from a --windowed PyInstaller bundle.
@@ -172,6 +174,10 @@ def get_tools_ffmpeg_path() -> Path:
     return get_tools_dir() / FFMPEG_EXE
 
 
+def get_tools_aria2c_path() -> Path:
+    return get_tools_dir() / ARIA2C_EXE
+
+
 def find_ytdlp_exe() -> str | None:
     path = get_tools_ytdlp_path()
     if path.exists():
@@ -181,6 +187,13 @@ def find_ytdlp_exe() -> str | None:
 
 def find_ffmpeg_exe() -> str | None:
     path = get_tools_ffmpeg_path()
+    if path.exists():
+        return str(path)
+    return None
+
+
+def find_aria2c_exe() -> str | None:
+    path = get_tools_aria2c_path()
     if path.exists():
         return str(path)
     return None
@@ -296,6 +309,63 @@ def get_ffmpeg_version() -> str | None:
     if not ffmpeg:
         return None
     result = _run_tool([ffmpeg, "-version"], timeout=10)
+    if result is not None and result.returncode == 0:
+        lines = _decode_output(result.stdout).splitlines()
+        return lines[0].strip() if lines else None
+    return None
+
+
+def _aria2c_latest_asset() -> str | None:
+    """Return the browser_download_url of the latest Windows 64-bit aria2c zip."""
+    try:
+        req = urllib.request.Request(
+            ARIA2C_API_URL, headers={"User-Agent": "RD-ClipRip/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        for asset in data.get("assets", []):
+            name = str(asset.get("name", "")).lower()
+            if name.endswith(".zip") and "win" in name and "64" in name:
+                return str(asset.get("browser_download_url", ""))
+    except Exception:
+        return None
+    return None
+
+
+def _extract_aria2c(zip_path: Path, destination: Path) -> None:
+    with zipfile.ZipFile(zip_path) as archive:
+        member = next(
+            (name for name in archive.namelist() if name.lower().endswith("aria2c.exe")),
+            None,
+        )
+        if member is None:
+            raise FileNotFoundError("aria2c.exe was not found in the downloaded archive.")
+        with archive.open(member) as source, destination.open("wb") as target:
+            target.write(source.read())
+
+
+def install_or_update_aria2c() -> tuple[bool, str]:
+    """Download aria2c (latest Windows 64-bit release) into tools/."""
+    destination = get_tools_aria2c_path()
+    try:
+        download_url = _aria2c_latest_asset()
+        if not download_url:
+            return False, "Could not locate the latest aria2c Windows release."
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "aria2c.zip"
+            with urllib.request.urlopen(download_url, timeout=60) as response:
+                archive_path.write_bytes(response.read())
+            _extract_aria2c(archive_path, destination)
+        return True, f"aria2c installed to {destination}"
+    except Exception as ex:
+        return False, f"Failed to install or update aria2c: {ex}"
+
+
+def get_aria2c_version() -> str | None:
+    aria2c = find_aria2c_exe()
+    if not aria2c:
+        return None
+    result = _run_tool([aria2c, "--version"], timeout=10)
     if result is not None and result.returncode == 0:
         lines = _decode_output(result.stdout).splitlines()
         return lines[0].strip() if lines else None
@@ -421,6 +491,8 @@ def build_ytdlp_args(
     no_playlist: bool = True,
     rate_limit_mbps: float = 0.0,
     concurrent_fragments: int = 0,
+    downloader: str = "native",
+    aria2c_connections: int = 8,
 ) -> list[str]:
     """Build the yt-dlp argument list for video downloads.
 
@@ -498,6 +570,20 @@ def build_ytdlp_args(
     if concurrent_fragments and concurrent_fragments > 1:
         args.insert(2, "--concurrent-fragments")
         args.insert(3, str(concurrent_fragments))
+
+    # External downloader (aria2c) for direct/single-file downloads. Falls back
+    # to native automatically if aria2c isn't installed yet.
+    if downloader == "aria2c":
+        aria2c = find_aria2c_exe()
+        if aria2c:
+            args.insert(2, "--downloader")
+            args.insert(3, aria2c)
+            args.insert(2, "--downloader-args")
+            args.insert(
+                3,
+                f"aria2c:-x {max(1, aria2c_connections)} -k 1M "
+                "--file-allocation=none --summary-interval=1",
+            )
 
     # Remux final container to MP4 (needs ffmpeg)
     if remux_to_mp4:
@@ -606,6 +692,8 @@ def run_single_item(
     ffmpeg_exe: str | None = None,
     rate_limit_mbps: float = 0.0,
     concurrent_fragments: int = 0,
+    downloader: str = "native",
+    aria2c_connections: int = 8,
     on_progress: Any = None,
     register_proc: Any = None,
     unregister_proc: Any = None,
@@ -646,6 +734,8 @@ def run_single_item(
             no_playlist=not allow_playlist,
             rate_limit_mbps=rate_limit_mbps,
             concurrent_fragments=concurrent_fragments,
+            downloader=downloader,
+            aria2c_connections=aria2c_connections,
         )
     except Exception as ex:
         return {
