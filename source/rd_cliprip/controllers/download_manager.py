@@ -24,7 +24,6 @@ from rd_cliprip.models.session import (
     set_active_session,
 )
 from rd_cliprip.services.downloader import (
-    describe_failure,
     fetch_title,
     find_ffmpeg_exe,
     is_fatal_error,
@@ -686,7 +685,7 @@ class DownloadManager(QObject):
             and not is_fatal_error(message)
         )
         if not retryable:
-            self.session.mark_failed(item, describe_failure(message))
+            self.session.mark_failed(item, message)
             return
 
         # Transient error: keep it queued so an idle agent picks it up again

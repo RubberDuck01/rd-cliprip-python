@@ -42,17 +42,26 @@ _SIZE_RE = re.compile(r"of\s+~?([\d.,]+\s?[KMGT]?i?B)")
 _SPEED_RE = re.compile(r"at\s+(?:Unknown\s?)?([\d.,]+\s?[KMGT]?i?B/s)")
 _ETA_RE = re.compile(r"ETA\s+([0-9:]+)")
 
+# aria2c progress line, e.g.:
+# [#780e9f 320KiB/2.0MiB(15%) CN:1 DL:320KiB ETA:5s]
+_ARIA_SIZE_RE = re.compile(r"([\d.,]+[KMGT]?i?B)/([\d.,]+[KMGT]?i?B)\(")
+_ARIA_SPEED_RE = re.compile(r"DL:([\d.,]+[KMGT]?i?B)")
+_ARIA_ETA_RE = re.compile(r"ETA:([0-9]+[hms][0-9hms]*|\d+)")
+
 
 def parse_progress_line(line: str) -> dict[str, Any]:
     """Extract percent / total size / speed / ETA from a yt-dlp progress line.
 
-    Returns dict with keys: percent (int or None), total, speed, eta (str).
+    Understands both yt-dlp's native progress format and aria2c's external
+    downloader output. Returns dict: percent (int or None), total, speed, eta.
     """
     info: dict[str, Any] = {"percent": None, "total": "", "speed": "", "eta": ""}
-    match = _PROGRESS_RE.search(line)
-    if not match:
+    matches = _PROGRESS_RE.findall(line)
+    if not matches:
         return info
-    info["percent"] = int(float(match.group(1)))
+    # Use the last percentage on the line: aria2c sometimes appends yt-dlp's
+    # final '[download] 100% ...' to the same output line.
+    info["percent"] = int(float(matches[-1]))
 
     size = _SIZE_RE.search(line)
     if size:
@@ -63,6 +72,21 @@ def parse_progress_line(line: str) -> dict[str, Any]:
     eta = _ETA_RE.search(line)
     if eta:
         info["eta"] = eta.group(1)
+
+    # aria2c output (external downloader)
+    if not info["total"]:
+        aria_size = _ARIA_SIZE_RE.search(line)
+        if aria_size:
+            info["total"] = aria_size.group(2).replace(" ", "")
+    if not info["speed"]:
+        aria_speed = _ARIA_SPEED_RE.search(line)
+        if aria_speed:
+            info["speed"] = aria_speed.group(1).replace(" ", "") + "/s"
+    if not info["eta"]:
+        aria_eta = _ARIA_ETA_RE.search(line)
+        if aria_eta:
+            info["eta"] = aria_eta.group(1)
+
     return info
 
 # Error text that means the URL itself is dead/permanently broken. These must
@@ -104,11 +128,21 @@ _NOT_FOUND_HINTS = (
     "has been removed",
     "removed by",
     "does not exist",
-    "invalid url",
-    "is not a valid",
-    "not a valid url",
     "unable to extract",
     "unable to download",
+)
+
+_INVALID_URL_HINTS = (
+    "invalid url",
+    "unsupported url",
+    "is not a valid",
+    "not a valid url",
+)
+
+_PRIVATE_HINTS = (
+    "private video",
+    "members only",
+    "sign in to confirm",
 )
 
 
@@ -123,14 +157,18 @@ def is_fatal_error(message: str) -> bool:
 def describe_failure(message: str) -> str:
     """Return a short friendly label for a failed download.
 
-    Dead/nonexistent videos become 'Not found'; everything else keeps its
-    original (possibly raw) message.
+    Dead/nonexistent videos become 'Not found', malformed links 'Invalid URL',
+    gated videos 'Private'; anything else keeps its original message.
     """
     if not message:
         return "Failed"
     lowered = message.lower()
     if any(hint in lowered for hint in _NOT_FOUND_HINTS):
         return "Not found"
+    if any(hint in lowered for hint in _INVALID_URL_HINTS):
+        return "Invalid URL"
+    if any(hint in lowered for hint in _PRIVATE_HINTS):
+        return "Private"
     return message
 
 

@@ -22,6 +22,7 @@ from rd_cliprip.models.session import (
     STATE_QUEUED,
     SessionItem,
 )
+from rd_cliprip.services.downloader import describe_failure
 
 _COL_INDEX = 0
 _COL_ITEM = 1
@@ -394,10 +395,8 @@ class DownloadsTable(QTableWidget):
         if item.state == STATE_ACTIVE:
             return "Downloading\u2026"
         if item.state == STATE_FAILED:
-            if item.error == "Not found":
-                return "Failed: Not found"
-            short = (item.error or "Failed").replace("\n", " ")
-            return f"Failed \u2014 {short[:60]}"
+            label = describe_failure(item.error or "Failed").replace("\n", " ")
+            return label[:60]
         if item.state == STATE_CANCELLED:
             return "Cancelled"
         if item.attempts > 0:
