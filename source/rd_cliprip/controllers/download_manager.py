@@ -2,11 +2,17 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+
+# Suppress console windows for helper processes (e.g. taskkill) on Windows.
+_SUBPROCESS_FLAGS: dict = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+)
 
 from rd_cliprip.models.config import Config
 from rd_cliprip.models.stats import Stats
@@ -369,6 +375,7 @@ class DownloadManager(QObject):
                         ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                         capture_output=True,
                         timeout=10,
+                        **_SUBPROCESS_FLAGS,
                     )
                 else:
                     proc.kill()
