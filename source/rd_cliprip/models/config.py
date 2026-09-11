@@ -48,9 +48,12 @@ class Config:
                 "cookies_path": "",
                 "clipboard_paste_enabled": True,
                 "max_concurrent_downloads": 1,
-                "remux_to_mp4": True,
+                "remux_to_mp4": False,
                 "auto_retry": 1,
                 "max_download_speed_mbps": 0.0,
+                "concurrent_fragments": 8,
+                "downloader": "native",
+                "aria2c_connections": 8,
                 "show_banner": True,
                 "network_indicator_enabled": True,
                 "network_poll_interval": 15,
@@ -102,7 +105,7 @@ class Config:
 
     @property
     def remux_to_mp4(self) -> bool:
-        return bool(self.data["settings"].get("remux_to_mp4", True))
+        return bool(self.data["settings"].get("remux_to_mp4", False))
 
     @property
     def auto_retry(self) -> int:
@@ -117,6 +120,25 @@ class Config:
             return max(0.0, float(self.data["settings"].get("max_download_speed_mbps", 0.0)))
         except (TypeError, ValueError):
             return 0.0
+
+    @property
+    def concurrent_fragments(self) -> int:
+        try:
+            return max(0, min(32, int(self.data["settings"].get("concurrent_fragments", 8))))
+        except (TypeError, ValueError):
+            return 8
+
+    @property
+    def downloader(self) -> str:
+        value = str(self.data["settings"].get("downloader", "native")).lower()
+        return value if value in ("native", "aria2c") else "native"
+
+    @property
+    def aria2c_connections(self) -> int:
+        try:
+            return max(1, min(32, int(self.data["settings"].get("aria2c_connections", 8))))
+        except (TypeError, ValueError):
+            return 8
 
     @property
     def network_indicator_enabled(self) -> bool:
@@ -184,6 +206,19 @@ class Config:
 
     def set_max_download_speed_mbps(self, value: float) -> None:
         self.data["settings"]["max_download_speed_mbps"] = max(0.0, float(value))
+        self.save()
+
+    def set_concurrent_fragments(self, value: int) -> None:
+        self.data["settings"]["concurrent_fragments"] = max(0, min(32, int(value)))
+        self.save()
+
+    def set_downloader(self, value: str) -> None:
+        value = str(value).lower()
+        self.data["settings"]["downloader"] = value if value in ("native", "aria2c") else "native"
+        self.save()
+
+    def set_aria2c_connections(self, value: int) -> None:
+        self.data["settings"]["aria2c_connections"] = max(1, min(32, int(value)))
         self.save()
 
     def set_network_indicator_enabled(self, value: bool) -> None:

@@ -15,6 +15,8 @@ YTDLP_EXE = "yt-dlp.exe"
 YTDLP_DOWNLOAD_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 FFMPEG_EXE = "ffmpeg.exe"
 FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+ARIA2C_EXE = "aria2c.exe"
+ARIA2C_API_URL = "https://api.github.com/repos/aria2/aria2/releases/latest"
 
 # Suppress the console window that would otherwise flash on Windows when
 # spawning child processes from a --windowed PyInstaller bundle.
@@ -28,6 +30,11 @@ VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv", ".ts", ".m4v"}
 # Strip a trailing yt-dlp id suffix: "Title [aBc123]" -> "Title"
 _ID_SUFFIX_RE = re.compile(r"\s*\[[^\]]+\]\s*$")
 
+# Staging filename template. The title is capped so the full path stays well
+# under Windows' ~260 char limit even for sites with very long titles
+# (otherwise yt-dlp fails with 'unable to open for writing: invalid argument').
+OUTPUT_TEMPLATE = "%(title).140s [%(id)s].%(ext)s"
+
 # ffmpeg "-i" reports container duration on stderr as:  Duration: 01:23:45.67
 _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+)")
 
@@ -35,17 +42,26 @@ _SIZE_RE = re.compile(r"of\s+~?([\d.,]+\s?[KMGT]?i?B)")
 _SPEED_RE = re.compile(r"at\s+(?:Unknown\s?)?([\d.,]+\s?[KMGT]?i?B/s)")
 _ETA_RE = re.compile(r"ETA\s+([0-9:]+)")
 
+# aria2c progress line, e.g.:
+# [#780e9f 320KiB/2.0MiB(15%) CN:1 DL:320KiB ETA:5s]
+_ARIA_SIZE_RE = re.compile(r"([\d.,]+[KMGT]?i?B)/([\d.,]+[KMGT]?i?B)\(")
+_ARIA_SPEED_RE = re.compile(r"DL:([\d.,]+[KMGT]?i?B)")
+_ARIA_ETA_RE = re.compile(r"ETA:([0-9]+[hms][0-9hms]*|\d+)")
+
 
 def parse_progress_line(line: str) -> dict[str, Any]:
     """Extract percent / total size / speed / ETA from a yt-dlp progress line.
 
-    Returns dict with keys: percent (int or None), total, speed, eta (str).
+    Understands both yt-dlp's native progress format and aria2c's external
+    downloader output. Returns dict: percent (int or None), total, speed, eta.
     """
     info: dict[str, Any] = {"percent": None, "total": "", "speed": "", "eta": ""}
-    match = _PROGRESS_RE.search(line)
-    if not match:
+    matches = _PROGRESS_RE.findall(line)
+    if not matches:
         return info
-    info["percent"] = int(float(match.group(1)))
+    # Use the last percentage on the line: aria2c sometimes appends yt-dlp's
+    # final '[download] 100% ...' to the same output line.
+    info["percent"] = int(float(matches[-1]))
 
     size = _SIZE_RE.search(line)
     if size:
@@ -56,6 +72,21 @@ def parse_progress_line(line: str) -> dict[str, Any]:
     eta = _ETA_RE.search(line)
     if eta:
         info["eta"] = eta.group(1)
+
+    # aria2c output (external downloader)
+    if not info["total"]:
+        aria_size = _ARIA_SIZE_RE.search(line)
+        if aria_size:
+            info["total"] = aria_size.group(2).replace(" ", "")
+    if not info["speed"]:
+        aria_speed = _ARIA_SPEED_RE.search(line)
+        if aria_speed:
+            info["speed"] = aria_speed.group(1).replace(" ", "") + "/s"
+    if not info["eta"]:
+        aria_eta = _ARIA_ETA_RE.search(line)
+        if aria_eta:
+            info["eta"] = aria_eta.group(1)
+
     return info
 
 # Error text that means the URL itself is dead/permanently broken. These must
@@ -83,6 +114,35 @@ _FATAL_HINTS = (
     "sign in to confirm",
     "account terminated",
     "executable not found",
+    "unable to extract",
+    "unable to download",
+)
+
+# Substrings that mean the video/page simply does not exist. Shown to the user
+# as a friendly 'Not found' instead of a raw yt-dlp extract error.
+_NOT_FOUND_HINTS = (
+    "404",
+    "not found",
+    "is not available",
+    "no longer exists",
+    "has been removed",
+    "removed by",
+    "does not exist",
+    "unable to extract",
+    "unable to download",
+)
+
+_INVALID_URL_HINTS = (
+    "invalid url",
+    "unsupported url",
+    "is not a valid",
+    "not a valid url",
+)
+
+_PRIVATE_HINTS = (
+    "private video",
+    "members only",
+    "sign in to confirm",
 )
 
 
@@ -92,6 +152,24 @@ def is_fatal_error(message: str) -> bool:
         return True
     lowered = message.lower()
     return any(hint in lowered for hint in _FATAL_HINTS)
+
+
+def describe_failure(message: str) -> str:
+    """Return a short friendly label for a failed download.
+
+    Dead/nonexistent videos become 'Not found', malformed links 'Invalid URL',
+    gated videos 'Private'; anything else keeps its original message.
+    """
+    if not message:
+        return "Failed"
+    lowered = message.lower()
+    if any(hint in lowered for hint in _NOT_FOUND_HINTS):
+        return "Not found"
+    if any(hint in lowered for hint in _INVALID_URL_HINTS):
+        return "Invalid URL"
+    if any(hint in lowered for hint in _PRIVATE_HINTS):
+        return "Private"
+    return message
 
 
 def parse_ffmpeg_duration(text: str) -> int:
@@ -134,6 +212,10 @@ def get_tools_ffmpeg_path() -> Path:
     return get_tools_dir() / FFMPEG_EXE
 
 
+def get_tools_aria2c_path() -> Path:
+    return get_tools_dir() / ARIA2C_EXE
+
+
 def find_ytdlp_exe() -> str | None:
     path = get_tools_ytdlp_path()
     if path.exists():
@@ -143,6 +225,13 @@ def find_ytdlp_exe() -> str | None:
 
 def find_ffmpeg_exe() -> str | None:
     path = get_tools_ffmpeg_path()
+    if path.exists():
+        return str(path)
+    return None
+
+
+def find_aria2c_exe() -> str | None:
+    path = get_tools_aria2c_path()
     if path.exists():
         return str(path)
     return None
@@ -258,6 +347,63 @@ def get_ffmpeg_version() -> str | None:
     if not ffmpeg:
         return None
     result = _run_tool([ffmpeg, "-version"], timeout=10)
+    if result is not None and result.returncode == 0:
+        lines = _decode_output(result.stdout).splitlines()
+        return lines[0].strip() if lines else None
+    return None
+
+
+def _aria2c_latest_asset() -> str | None:
+    """Return the browser_download_url of the latest Windows 64-bit aria2c zip."""
+    try:
+        req = urllib.request.Request(
+            ARIA2C_API_URL, headers={"User-Agent": "RD-ClipRip/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        for asset in data.get("assets", []):
+            name = str(asset.get("name", "")).lower()
+            if name.endswith(".zip") and "win" in name and "64" in name:
+                return str(asset.get("browser_download_url", ""))
+    except Exception:
+        return None
+    return None
+
+
+def _extract_aria2c(zip_path: Path, destination: Path) -> None:
+    with zipfile.ZipFile(zip_path) as archive:
+        member = next(
+            (name for name in archive.namelist() if name.lower().endswith("aria2c.exe")),
+            None,
+        )
+        if member is None:
+            raise FileNotFoundError("aria2c.exe was not found in the downloaded archive.")
+        with archive.open(member) as source, destination.open("wb") as target:
+            target.write(source.read())
+
+
+def install_or_update_aria2c() -> tuple[bool, str]:
+    """Download aria2c (latest Windows 64-bit release) into tools/."""
+    destination = get_tools_aria2c_path()
+    try:
+        download_url = _aria2c_latest_asset()
+        if not download_url:
+            return False, "Could not locate the latest aria2c Windows release."
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "aria2c.zip"
+            with urllib.request.urlopen(download_url, timeout=60) as response:
+                archive_path.write_bytes(response.read())
+            _extract_aria2c(archive_path, destination)
+        return True, f"aria2c installed to {destination}"
+    except Exception as ex:
+        return False, f"Failed to install or update aria2c: {ex}"
+
+
+def get_aria2c_version() -> str | None:
+    aria2c = find_aria2c_exe()
+    if not aria2c:
+        return None
+    result = _run_tool([aria2c, "--version"], timeout=10)
     if result is not None and result.returncode == 0:
         lines = _decode_output(result.stdout).splitlines()
         return lines[0].strip() if lines else None
@@ -382,12 +528,16 @@ def build_ytdlp_args(
     remux_to_mp4: bool = False,
     no_playlist: bool = True,
     rate_limit_mbps: float = 0.0,
+    concurrent_fragments: int = 0,
+    downloader: str = "native",
+    aria2c_connections: int = 8,
 ) -> list[str]:
     """Build the yt-dlp argument list for video downloads.
 
     ``output_template`` may be an absolute path template (e.g. a staging dir)
     or None to fall back to ``<output_dir>/%(title).200s.%(ext)s``.
     ``rate_limit_mbps`` caps each download's speed (0 = unlimited).
+    ``concurrent_fragments`` parallelises HLS/DASH fragment downloads (>1).
     """
     ytdlp = find_ytdlp_exe()
     if not ytdlp:
@@ -412,8 +562,17 @@ def build_ytdlp_args(
 
     # Format selection for video
     if preferred_format == "mp4":
-        # Best mp4 video + audio merged
-        fmt = f"bestvideo[ext=mp4][height<={_parse_resolution(preferred_resolution)}]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        # Prefer a single-file MP4 with broadly-compatible codecs. AV1-in-MP4
+        # plays fine but many thumbnailers/cloud services (e.g. MEGA) can't
+        # decode it, so AV1 is only used as a last resort.
+        height = _parse_resolution(preferred_resolution)
+        fmt = (
+            f"best[ext=mp4][vcodec=h264][height<={height}]"
+            f"/best[ext=mp4][vcodec!=av1][height<={height}]"
+            f"/bestvideo[vcodec=h264][height<={height}]+bestaudio[ext=m4a]"
+            f"/bestvideo[vcodec!=av1][height<={height}]+bestaudio[ext=m4a]"
+            f"/best"
+        )
     elif preferred_format == "mkv":
         fmt = f"bestvideo[height<={_parse_resolution(preferred_resolution)}]+bestaudio/best"
         args.insert(2, "--merge-output-format")
@@ -444,6 +603,25 @@ def build_ytdlp_args(
     if rate_limit_mbps and rate_limit_mbps > 0:
         args.insert(2, "--limit-rate")
         args.insert(3, f"{rate_limit_mbps:.2f}M")
+
+    # Parallel HLS/DASH fragment downloads
+    if concurrent_fragments and concurrent_fragments > 1:
+        args.insert(2, "--concurrent-fragments")
+        args.insert(3, str(concurrent_fragments))
+
+    # External downloader (aria2c) for direct/single-file downloads. Falls back
+    # to native automatically if aria2c isn't installed yet.
+    if downloader == "aria2c":
+        aria2c = find_aria2c_exe()
+        if aria2c:
+            args.insert(2, "--downloader")
+            args.insert(3, aria2c)
+            args.insert(2, "--downloader-args")
+            args.insert(
+                3,
+                f"aria2c:-x {max(1, aria2c_connections)} -k 1M "
+                "--file-allocation=none --summary-interval=1",
+            )
 
     # Remux final container to MP4 (needs ffmpeg)
     if remux_to_mp4:
@@ -551,6 +729,9 @@ def run_single_item(
     ffmpeg_location: str | None = None,
     ffmpeg_exe: str | None = None,
     rate_limit_mbps: float = 0.0,
+    concurrent_fragments: int = 0,
+    downloader: str = "native",
+    aria2c_connections: int = 8,
     on_progress: Any = None,
     register_proc: Any = None,
     unregister_proc: Any = None,
@@ -575,7 +756,7 @@ def run_single_item(
         }
 
     staging_dir.mkdir(parents=True, exist_ok=True)
-    output_template = "%(title)s [%(id)s].%(ext)s"
+    output_template = OUTPUT_TEMPLATE
 
     try:
         args = build_ytdlp_args(
@@ -590,6 +771,9 @@ def run_single_item(
             remux_to_mp4=remux_to_mp4,
             no_playlist=not allow_playlist,
             rate_limit_mbps=rate_limit_mbps,
+            concurrent_fragments=concurrent_fragments,
+            downloader=downloader,
+            aria2c_connections=aria2c_connections,
         )
     except Exception as ex:
         return {

@@ -47,7 +47,7 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self.config = config
         self._icon_clicks = 0
-        self.setWindowTitle("RD ClipRip - About")
+        self.setWindowTitle("Rubber Duck's ClipRip - About")
         self.setModal(True)
         self.resize(560, 620)
 

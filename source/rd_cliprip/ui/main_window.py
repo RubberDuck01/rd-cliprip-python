@@ -1,5 +1,6 @@
 import os
 import webbrowser
+from html import escape
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QRect, Qt, QTimer, QUrl, pyqtSignal
@@ -35,6 +36,7 @@ from rd_cliprip.models.stats import Stats
 from rd_cliprip.resources import get_resources_dir
 from rd_cliprip.services.network import NetworkMonitor
 from rd_cliprip.ui.about_dialog import AboutDialog
+from rd_cliprip.ui.aria2c_dialog import Aria2cDialog
 from rd_cliprip.ui.donation_dialog import DonationDialog
 from rd_cliprip.ui.downloads_table import DownloadsTable
 from rd_cliprip.ui.ffmpeg_dialog import FfmpegDialog
@@ -59,6 +61,7 @@ class MainWindow(QMainWindow):
         self.manager = manager
         self.network_monitor = network_monitor
         self.tray: QSystemTrayIcon | None = None
+        self._table_ids: list[str] = []
         self.setWindowTitle(f"Rubber Duck's ClipRip v{__version__}")
         self.resize(940, 720)
 
@@ -71,6 +74,7 @@ class MainWindow(QMainWindow):
         self.manager.status_message.connect(self.set_status)
         self.manager.all_finished.connect(self._on_all_finished)
         self.manager.progress_updated.connect(self.table.update_progress)
+        self.manager.progress_updated.connect(self._on_progress_status)
         self.manager.running_changed.connect(self._on_running_changed)
         if self.manager.session is None:
             self.manager.new_session(self.config.downloads_dir)
@@ -158,6 +162,9 @@ class MainWindow(QMainWindow):
         )
         tools_menu.addAction(
             QAction("&FFmpeg Settings", self, triggered=self.open_ffmpeg_manager)
+        )
+        tools_menu.addAction(
+            QAction("&aria2c Settings", self, triggered=self.open_aria2c_manager)
         )
 
         # Help
@@ -264,14 +271,15 @@ class MainWindow(QMainWindow):
 
         controls_row = QHBoxLayout()
         controls_row.setSpacing(6)
-        self.start_btn = QPushButton("Start Downloads")
+        self.start_btn = QPushButton("Download")
         self.start_btn.clicked.connect(self.manager.start)
         controls_row.addWidget(self.start_btn)
-        self.stop_btn = QPushButton("Stop")
+        self.stop_btn = QPushButton("Abort")
         self.stop_btn.clicked.connect(self.manager.stop)
         controls_row.addWidget(self.stop_btn)
         controls_row.addStretch()
         self.summary_label = QLabel("")
+        self.summary_label.setTextFormat(Qt.TextFormat.RichText)
         self.summary_label.setEnabled(False)
         controls_row.addWidget(self.summary_label)
         queue_layout.addLayout(controls_row)
@@ -287,6 +295,7 @@ class MainWindow(QMainWindow):
         status_row = QHBoxLayout()
         status_row.setSpacing(6)
         self.status_label = QLabel("Ready!")
+        self.status_label.setTextFormat(Qt.TextFormat.RichText)
         status_row.addWidget(self.status_label, stretch=1)
         clear_finished_btn = QPushButton("Clear Finished")
         clear_finished_btn.clicked.connect(self.clear_finished)
@@ -570,7 +579,15 @@ class MainWindow(QMainWindow):
     def _on_items_changed(self) -> None:
         session = self.manager.session
         items = session.items if session else []
-        self.table.refresh_items(items)
+        ids = [i.id for i in items]
+        if ids != self._table_ids:
+            # Composition changed (add/remove/clear/switch): rebuild the table.
+            self.table.refresh_items(items)
+            self._table_ids = ids
+        else:
+            # Same rows: update in place so scroll position and selection survive.
+            for item in items:
+                self.table.update_item(item)
         self._update_summary()
         self._sync_session_ui()
         self._update_controls()
@@ -604,13 +621,19 @@ class MainWindow(QMainWindow):
             self.summary_label.setText("")
             return
         counts = session.counts()
-        self.summary_label.setText(
-            f"{counts['completed']}/{counts['total']} done"
-            + (f"  ·  {counts['active']} active" if counts["active"] else "")
-            + (f"  ·  {counts['failed']} failed" if counts["failed"] else "")
-            + (f"  ·  {counts['cancelled']} cancelled" if counts["cancelled"] else "")
-            + (f"  ·  {counts['queued']} queued" if counts["queued"] else "")
-        )
+        parts = [
+            f"<span style='color:#2e7d32;'>{counts['completed']}</span>"
+            f"<span style='color:#555555;'>/{counts['total']}</span> done"
+        ]
+        if counts["active"]:
+            parts.append(f"<span style='color:#1565c0;'>{counts['active']} active</span>")
+        if counts["failed"]:
+            parts.append(f"<span style='color:#c62828;'>{counts['failed']} failed</span>")
+        if counts["cancelled"]:
+            parts.append(f"<span style='color:#9e9e9e;'>{counts['cancelled']} cancelled</span>")
+        if counts["queued"]:
+            parts.append(f"<span style='color:#555555;'>{counts['queued']} queued</span>")
+        self.summary_label.setText("  \u00b7  ".join(parts))
 
     def _update_controls(self) -> None:
         running = self.manager.running
@@ -676,7 +699,41 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def set_status(self, text: str) -> None:
-        self.status_label.setText(text)
+        # Status label is rich text (for the coloured live line); escape plain
+        # messages so any stray '<' etc. can't be parsed as markup.
+        self.status_label.setText(escape(text))
+
+    def _on_progress_status(self, item_id, percent, speed, eta, total) -> None:
+        """Show a glanceable, colour-coded live status while downloading."""
+        session = self.manager.session
+        if session is None:
+            return
+        item = session.get_item(item_id)
+        title = (item.title or item.url) if item is not None else ""
+        if len(title) > 60:
+            title = title[:57] + "\u2026"
+
+        counts = session.counts()
+        active = counts["active"]
+        agent_word = "agent" if active == 1 else "agents"
+        counts_html = (
+            f"<span style='color:#2e7d32;'>{counts['completed']}</span>"
+            f"<span style='color:#555555;'>/{counts['total']}</span> "
+            f"<span style='color:#1565c0;'>({active} {agent_word})</span>"
+        )
+        parts = [counts_html]
+        if title:
+            parts.append(escape(title))
+        live = []
+        if speed:
+            live.append(f"<span style='color:#1565c0;'>{escape(speed)}</span>")
+        if eta:
+            live.append(f"<span style='color:#b26a00;'>ETA: {escape(eta)}</span>")
+        if total:
+            live.append(f"<span style='color:#555555;'>of {escape(total)}</span>")
+        if live:
+            parts.append("  \u00b7  ".join(live))
+        self.status_label.setText("  \u2014  ".join(parts))
 
     # ------------------------------------------------------------------
     #  Dialogs & helpers
@@ -723,6 +780,9 @@ class MainWindow(QMainWindow):
 
     def open_ffmpeg_manager(self) -> None:
         FfmpegDialog(self).exec()
+
+    def open_aria2c_manager(self) -> None:
+        Aria2cDialog(self).exec()
 
     def visit_github(self) -> None:
         webbrowser.open("https://github.com/RubberDuck01/rd-cliprip-python")
