@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 
 from rd_cliprip.models.session import list_sessions
 from rd_cliprip.models.stats import Stats
+from rd_cliprip.ui.row_band import band_event_filter, install_row_band
 from rd_cliprip.utils import format_dt_short
 
 
@@ -75,6 +76,8 @@ class StatsDialog(QDialog):
             QAbstractItemView.SelectionBehavior.SelectRows
         )
         self.sessions_table.setAlternatingRowColors(True)
+        install_row_band(self.sessions_table)
+        self.sessions_table.viewport().installEventFilter(self)
         sessions_layout.addWidget(self.sessions_table)
         layout.addWidget(self.sessions_group, stretch=1)
 
@@ -96,6 +99,11 @@ class StatsDialog(QDialog):
     # ------------------------------------------------------------------
     #  Building / refresh
     # ------------------------------------------------------------------
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self.sessions_table.viewport():
+            band_event_filter(self.sessions_table, event)
+        return super().eventFilter(obj, event)
 
     _TILE_STYLE = "QFrame#statTile { background: rgba(128, 128, 128, 28); border-radius: 8px; }"
 
@@ -169,6 +177,7 @@ class StatsDialog(QDialog):
 
     def _populate_sessions(self) -> None:
         sessions = list_sessions()
+        self.sessions_table._hover_row = -1
         self.sessions_table.setRowCount(0)
         for meta in sessions:
             row = self.sessions_table.rowCount()
